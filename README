@@ -1,0 +1,304 @@
+README - Duplex 0.3.1.1 - 08/13/2018
+
+Duplex (two-sided) printing saves paper, money, trees, and space.  Several other
+utilities are available which provide this functionality, but most require the user
+to repeatedly select options in popup windows and are prone to user error.  No utility
+I am aware of will (gracefully) allow a user to print multiple duplex print jobs in a
+batch.
+
+Duplex.0.3.1.1 - 08/13/2018
+
+  Highlights:
+    
+    NOTE: New dot.duplexpr config file (as of release 0.3.1), be sure to install and
+      customize it as necessary (mandatory - *if* you are upgrading from a release
+      prior to 0.3.1 or if this is a new install).
+    Changed default_formfeed to off (0) in dot.duplexpr
+    Added kmprbatches - (optional) reports how multiple print jobs will be split into
+      batches when using kmprb in batch mode
+    Fixed print strategy 3 code in mprb (still broken in kmprb)
+    Reworked How_To_Request_A_New_Print_Strategy.pdf
+    Added Exploring_Print_Strategies.pdf - How to discover the correct printing strategy
+      for your printer
+    Added a delete_to_trash configuration option to dot.duplexpr
+      If enabled (and if trash-cli is installed), print files selected for deletion will
+      be deleted to Trash instead of being completely removed (rm)
+      If you want to use this option and are upgrading from 0.3.1, then you'll have to
+      either install and customize the new dot.duplexpr or add the option from the end of
+      dot.duplexpr to your existing .duplexpr file.
+      
+      NOTE: If you plan on using the new delete to Trash option, please verify that it
+        works correctly *before* relying on it. If the scripts cannot find trash-put
+        (the program which deletes to Trash), they will silently revert to permanent
+        deletion using rm.
+        
+----        
+
+The duplex package is a set of shell scripts for duplex printing.  The nature of shell
+scripts makes them relatively easy to extend and modify.  I have tried to use string
+constants and put system dependencies in functions to further facilitate this.
+
+Once the package (tarball) is unpacked, the scripts are ready to use.  Just put them in a
+directory that is in your PATH (e.g. $HOME/bin) so your shell can find them.
+
+Now, you also have to copy and rename the new configuration file, dot.duplexpr to
+$HOME/.duplexpr
+
+It contains the default path to the print queue, the default print strategy, and several
+other parameters.
+
+Several of the scripts use enscript to convert text files to postscript.
+For this to work correctly, add the following to the file .enscriptrc in your home
+directory.
+If this file does not exist, create it with the following content.
+
+# Defaults for enscript (used by duplexpr package)
+Spooler: <path>/dplx
+
+where "<path>" is the full path of the directory where you installed dplx.
+For example, if you installed dplx in /home/joe/bin then it would be:
+Spooler: /home/joe/bin/dplx
+
+You may also need to set the default paper type as in:
+DefaultMedia: Letter
+
+(Replace Letter with the page definition for the paper you use.)
+
+The GUI scripts use the folder $HOME/pq as the queue of files to be printed.
+If you want to change that, edit $HOME/.duplexpr (in package as dot.duplexpr so it isn't
+hidden)
+See INSTALL for more details.
+
+All of the scripts are optional. Use those that fit your work style.
+
+WARNING: The script names are intended to be unique (should not replace any existing
+commands on your system), but be sure to verify this for yourself BEFORE installing them.
+
+Brief synopsis of the scripts (see duplex.txt for details):
+
+Command Line Apps:
+dplx - Prints one two-sided print job by setting up the parameters and calling duplex
+duplex - Prints one two-sided print job
+mpr - Multiple print duplex jobs - one complete job (both sides) at a time using dplx
+mprb - Multiple print batch duplex jobs - prints the odd pages of all jobs in one pass
+       and all the even pages in the other pass
+dprint - Prints one text file two-sided using some settings such as margins, wordwrap,
+  and, optionally, font, font-size, landscape, title
+dprintf - Prints one file directly to the print queue (using dprint) automatically naming
+  it to the next available print file name/number
+dprintm - Prints one text file two-sided with a mono-spaced font (for structured text
+  e.g. source code or tabular data,)
+rmpq - Remove files from the print queue
+
+Gui Apps:
+  These are preset to use the print queue which they expect to be in $HOME/pq by default.
+  (See INSTALL for details on how to modify this.)
+
+kmprb is a GUI which does it all.
+  It displays all the files in the print queue along with the number of pages and sheets
+  each will generate.
+  Next, it allows you to select which files to print and prints them.
+  Finally, it allows you to select which of the successfully printed files will be
+  deleted.  (Presumably, they are not needed any longer once they have been
+  successfully printed.)
+
+kmprbatches (New) is an optional script which reports the actual sizes of the batches which
+  will be printed by kmprb using the default or a specified batch size. Optionally separates
+  all one page jobs into their own batch and if print job files are specified on the command
+  line, only considers those jobs for batching.
+
+kmprb_one is similar to kmprb, but it finds and prints ALL one page jobs very quickly.
+
+krmpq allows you to select those print files you want to delete once they have been
+  printed.
+
+pqnext pops up an information dialog with the number of the next available print queue
+  file name along with a count of jobs and pages in the print queue. This is useful for
+  manually specifying the print file name in applications.
+  If xclip is installed (optional), the next file name is automatically copied to the
+  clipboard.
+
+klprm is a GUI which displays all the jobs in the user's CUPS print queue and allows
+  selected ones to be deleted.
+  
+General Notes:
+
+After installation, the file, Test_File.pdf should be printed using dplx.  This four page
+(two sheet) document will show you clearly whether duplex printing is working on your
+system.
+A detailed description of how this file printed along with the value of the -ps parameter
+(or default_print_strategy in .duplexpr) should be included in any bug reports related to
+printed output page issues. .duplexpr settings should also be included.
+
+If the default does not work, try adding -ps 1 or -ps 3 as the first parameters and see
+if that fixes it for your printer.  If it does, you can modify the default value in the
+.duplexpr configuration file.
+
+If jobs with an odd number of pages mess up the page order of subsequent jobs by printing
+the first page of the next job on the other side of the last page of the current job,
+try setting default_formfeed=1 in .duplexpr.
+
+Use
+  cd <location-where-duplex-is-installed> ## such as cd ~/installs/duplex_0_3_1_1
+  mprb Test_File_Odd.pdf Test_File.pdf
+  
+to test printing batches with odd page count jobs in them.
+
+See the file, How_To_Request_A_New_Print_Strategy.pdf for more details on documenting print
+strategy issues.
+
+I have several notebook computers running kubuntu (currently kubuntu xenial with KDE5).
+I have a couple of laserjets, a Samsung laser with duplex in hardware, and one Photosmart
+Inkjet printer running under CUPS.  The Duplex package works well
+in this setup. I almost feel like I have new, better printers now that I don't have to
+flip the output of each job and watch out not to reinsert the last page of odd page count
+jobs.  I wanted this to work as easily as it does under Windows.  And now, with 
+mprb/kmprb/kmprb_one, it works a lot better than Windows!
+
+It's also useful to use the batch size parameter in kmprb to break up large numbers of
+jobs into more manageable batches. You can see in advance what actual size batches
+will be used by running kmprbatches (new) with various parameters.
+
+Managing your own print queue also has its advantages.  You can print some jobs and, if
+you like the output, you can then print multiple copies without having to regenerate the
+print jobs.
+
+I routinely look at the print queue before printing (using mprb -i or mprb -I). Sometimes,
+I see an unexpectedly large job and decide to just delete it if it's something I don't
+really need.
+
+Using a notebook, it's particularly helpful to have a print queue.  When the printer is
+not attached, all the jobs just go into the print queue and are ready to print when the
+printer is attached *and* when I'm ready to deal with printing.  Paper doesn't just start
+shooting out of the printer as soon as it is attached.
+
+It's also very nice to "print" things and just keep working with an uninterrupted workflow
+without having to stop and attend to the printer every time something needs to be printed.
+After many jobs have been "printed", then they can be sent from the queue to the printer
+all at once.
+
+If there's a paper jam, or ink/toner runs out, all the jobs are still there to be
+reprinted.  With mprb -pass2, you can even reprint just the second sides of jobs whose
+pass one output survived the problem.
+
+Many computer systems are far more complex than mine.  I look forward to others testing
+the package on systems with networked printers, multiple printers and queues, and shared
+printers.  I think it should work on all of them (as long as no one else is printing to a
+shared printer at the same time as one of these scripts is printing to it!), but there is
+no substitute for testing.
+
+The code has a couple of system dependencies and I don't know how universally applicable
+they are.
+
+The function ps_page_ct() relies on whatever creates the postscript files to be printed
+(or enscript, if the files to be printed are text files) to put the postscript
+%%Pages: nnn line into the file near the beginning or end of the file.  So far, it's been
+in one or the other place in all files I've printed except those printed by Opera.  For
+those, the script counts the number of showpage commands.  This method is not guaranteed
+to work because one showpage command could be in a function or loop and be called multiple
+times.
+
+I have seen a document in PostScript 1.6.  My page counting algorithms do not know how to
+handle this format (and neither do I! and so it will fail with an error message.)
+
+pdfinfo is used to find the page count of PDF documents. This just works.
+
+The function lp_queue_id() relies on the output of the lp command to contain the
+queue-job_number in the fourth word of the line.  This is too hard coded for my taste,
+but I don't know another way to do it.
+
+Although yad (the tool that provides the GUI interfaces) does depend on GTK, I think it
+should run fine on other window managers and desktops.  I use it under KDE with no issues.
+If not, a text-only version of the scripts would be easy to write, but it wouldn't be
+quite as user friendly.
+
+The code is written for the way an HP Deskjet printer (page handling strategy 1) or an
+HP Laserjet P1006 printer (page handling strategy 2) handles paper. It also gets it
+perfectly for my HP Photosmart C4480 (page handling strategy 1). Print strategy 3 was added
+in 0.3.1 (and works better now). It's for printers which handle paper the way an HP DeskJet
+3630 All-in-One does. See duplex.txt for more details.
+
+To get this to work for all printers may requre a rewrite because one size doesn't fit
+all.
+It will probably require at least four (maybe 16) printing strategies to cover most
+printers and for now, there are only three (and print strategy 0 for non-duplex printing).
+
+If another printer works differently, all the same components of the code should still
+work with some rearranging of the sequence.  The Deskjet prints such that the output
+stacks printed face up with the most recent page on top.  To print the reverse side, all
+pages are manually removed, rotated 180 degrees horizontally and reinserted into the in
+paper tray.  The Laserjets print such that the output stacks printed face down with the 
+most recent page on the top.  To print the reverse side, all pages are manually removed,
+rotated 180 degrees horizontally and reinserted into the in paper tray.
+
+The way I use the system is: As I'm browsing the Internet or doing other tasks, I use
+"Print to File" for most things and put them all in one directory ($HOME/pq) with file
+names like 01, 02, 03, ....
+
+(If you want to use pqnext or dprintf (optional), they only work correctly with all digit
+file names.)
+
+(File names ending in .ps or .pdf work fine as well.) That keeps the print jobs in
+the same order I generated them in.  Then, when I'm ready, I just cd to that directory,
+do an mprb -I * to see how much I'm going to print (and if I need to modify the print
+order to put some small jobs ahead of large ones, etc.).  (See also the optional pql alias
+included in extras.txt.) Then, I usually let it go ahead and print the whole queue.  When
+it's done and checked, I use rmpq to delete the files in the print queue.
+
+When I have a lot to print, I just use shell glob expressions to
+specify which files to print and then rmpq.  E.g. mprb -I 0* or mprb -I 0[123]  .
+I also use kmprb with -1 and -B, the optional batch size parameter, to print all the 
+one-page jobs first and then print the rest in manageable sub-batches.
+
+I recently found a new use for the mpr script which I had stopped using. Because it
+prints one job at a time, it's great for times when your printer is almost out of toner
+or ink and you want to squeeze the last little bit out of it before changing cartridges.
+You can do the same thing with kmprb by setting the batch size to 1 sheet with the
+-b or -B options.
+
+For anyone interested, I aso have an AutoKey script available (see extras.txt) which is
+tied to Super-p (on my system) for Firefox and Thunderbird.  It automagically selects
+Print to File and fills in the next available print queue file name. Then it ends so that
+other print dialog options can still be selected.
+
+I just created a version of the script for the Vivaldi browser (which I love),
+but haven't tested it yet. Ask, if you're interested in it. 
+
+You can get AutoKey from git at
+https://github.com/Autokey/Autokey
+Installation instructions are available in our GitHub wiki and upon request to me or to
+the AutoKey list.
+
+My script has not been tested for newer, Python3 version yet and may need some minor tweaks
+to be compatible with Python 3.x.
+
+Now that I have kmprb, I have added an icon for it to my panel (task bar).  Once I have
+generated the print files as above, usually, I just click on the panel icon and let kmprb
+do the rest. That way, I can stay focused on what I am doing because I don't need to
+navigate through any menus or switch to a terminal window on another desktop.  I also have
+an icon for pqnext in my panel, so I can get the next print queue file name for manual use
+with applications other than Firefox or Thunderbird.  These icons are not added to the
+panel by installing the duplex package.  It must be done manually.
+
+I have been unable to identify the license holders of the icons I use, so they are not
+included in this package.
+
+Sometimes, I do an mprb -i * first.  If there are any one-page print jobs, I print them 
+all directly with one lp command (very fast) and then delete them.  Then, I print any
+remaining jobs with mprb.  This can also be done automatically just by using kmprb -1.
+Or, for printing one page jobs only, kmprb_one can be run.
+
+This is especially useful if you use print strategy 2 (default) which will print all one
+page jobs as blank pages during pass one because it prints even pages first and there
+aren't any.  (The script doesn't look ahead, so it doesn't know that in advance.)
+
+In real life, printers run out of ink, occasionally jam, and feed multiple pages at one
+time.  To handle this eventuality, mprb only prints one job at a time during pass two
+(where jams, and especially multi-feeds are more likely) so it can be killed without
+having to remove a number of jobs from the system print queue with lprm.
+
+mprb also has a -pass2 option so that, after a jam, any jobs which still have good pass
+one output (all sheets with just one side printed) may be reinserted into the printer to
+print just pass 2 (the other side of all the sheets).  Now, with faster processors and
+printers and big print buffers, this doesn't work as nicely as it used to, but if this is
+a problem, it is easy to add an additional delay between pass 2 print jobs.

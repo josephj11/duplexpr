@@ -1,0 +1,225 @@
+#!/bin/bash
+#####################################################
+## krmpq                                           ##
+##  clear out print queue files                    ##
+##  krmpq [[file] ... ]                            ##
+##                                                 ##
+## Copyright (c) 24 Jul 2015 Joseph J. Pollock     ##
+##   JPmicrosystems - josephj at main.nc.us        ##
+##                                                 ##
+##  Last modified 08/02/2018                       ##
+##                                                 ##
+## This program is free software; you can          ##
+## redistribute it and/or modify it under the      ##
+## terms of the GNU General Public License as      ##
+## published by the Free Software Foundation;      ##
+## either version 2 of the License, or             ##
+## (at your option) any later version.             ##
+##                                                 ##
+## This program is distributed in the hope         ##
+## that it will be useful, but WITHOUT ANY         ##
+## WARRANTY; without even the implied warranty     ##
+## of MERCHANTABILITY or FITNESS FOR A             ##
+## PARTICULAR PURPOSE. See the GNU General         ##
+## Public License for more details.                ##
+##                                                 ##
+## You should have received a copy of the          ##
+## program; if not, write to                       ##
+##    the Free Software Foundation, Inc.           ##
+##    59 Temple Place - Suite 330                  ##
+##    Boston, MA  02111-1307, USA                  ##
+## See: http://www.gnu.org/copyleft/gpl.html       ##
+#####################################################
+
+## Usage: krmpq [base file name] ...
+## Disallows arguments with paths so that only
+## files in the print queue can be deleted
+
+## Ignores files that don't exist or otherwise
+## can't be deleted (permissions, etc.)
+## If arguments are not specified, then it
+## allows selection of all files in print queue
+##
+
+function delete () {
+  local dtt="${delete_to_trash:-0}" ## 0 if undefined or null
+  hash trash-put &> /dev/null  ## see if trash-put is installed
+  (( $? )) && dtt=0 ## if not, disable this option
+
+ if (( dtt ))
+  then
+    trash-put "$@" &> /dev/null
+  else
+    rm -f "$@"
+  fi
+}
+
+script_error=9
+debug_out="/dev/stderr"  ## debug - so debug output always has somewhere to go
+##debug_out="$HOME/temp/debug_output_krmpq.txt"  ## debug
+##exec 5> "$debug_out"   ##  debug
+##BASH_XTRACEFD="5"     ##  debug       Calling from desktop
+##source "${HOME}/bin/bash_trace"  ## debug - TRACE
+e="" ## Actually delete files
+##e="echo " ## debug - just say we did - DRYRUN
+
+script_name="$(basename $0)"  ## path stripped name of this script
+##yopt="--center --on-top"
+yopt="--center"
+dsptime_short=5  ## yad timeout for normal messages
+dsptime_long=10  ## yad timeout for exception messages
+dsptime_error=30 ## yad timeout for error messages
+
+config="${HOME}/.duplexpr"
+rc=0  ## return code if not set elsewhere
+
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+  --text="Missing config file ${config}" --width=160 --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+source "${config}"
+if (( $? ))
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+  --text="Bad config file ${config}" --width=160 --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+cd "${pq}"
+if (( $?))
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+  --text="Can't access print queue [$pq]" --width=160 --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+##echo -e "krmpq: Args are [$@] Count is [$#]"  ## debug
+
+## Quit if print queue is empty
+if [[ -z "$(ls .)" ]]
+then
+  yad ${yopt} --title "${script_name}" --button=gtk-ok:0 --info\
+  --text="Print queue empty [$pq]" --timeout="${dsptime_short}"
+  exit 0
+fi
+
+if (( ! $# ))  ## No files on command line
+then
+  ## get file selection(s) from yad separated by vbars in a string
+  files="$(find . -maxdepth 1 -type f ! -name '\.*' -printf '%f\n' | sort |\
+  yad ${yopt} --title "Print Queue [$pq]" --no-markup  --list --multiple\
+  --button=gtk-ok:0 --button=gtk-cancel:1 \
+  --column="Select Files to Delete" --print-column=1 --width=400 --height=300)"
+  ##echo -e ${files}
+  if [[ -z "${files}" ]]  ## No files selected for deletion
+  then
+    yad ${yopt} --title "${script_name}" --button=gtk-ok:0 --info --width=220 --height=100\
+    --text "No files selected - Nothing deleted" --timeout="${dsptime_short}"
+  else
+    ## delete the vbars and quote the file names to handle embedded blanks
+    files=$(echo ${files} | sed -e's/\.\///g' -e 's/^/\"/' -e 's/|./\" \"/g' -e 's/|$/\"/')
+    ##echo -e ${files}
+    ${e} eval delete ${files}
+    yad ${yopt} --title "${script_name}" --button=gtk-ok:0 --info --width=220 --height=100\
+    --text "Selected print files deleted" --timeout="${dsptime_short}"
+  fi
+else  ## There are files on the command line
+  choices=""
+  for file in "$@"
+  do
+    ##echo -e "krmpq file [${file}]" ## debug
+    if [[ -f "${file}" ]]  ## The file exists
+    then  ## Make sure the file is in the print queue
+      if [[ -f  "$(basename "${file}")" ]] && [[ $(stat -c '%i' "${file}") == $(stat -c '%i' "$(basename "${file}")") ]]
+      then
+        choices="${choices}$(basename "${file}")\n"
+      else
+        yad ${yopt} --title "${script_name}" --error  --no-markup  --button=gtk-ok:0\
+        --text="${file} outside of print queue\n\nAborting..." --timeout="${dsptime_error}"
+        exit 1
+      fi
+    fi
+  done
+  
+  if [[ -z "${choices}" ]]  ## no files from command line are in the print queue
+  then
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --width=220 --height=100\
+    --text "No files to select - Nothing deleted" --timeout="${dsptime_error}"
+    exit 1
+  fi
+  
+  ## Trim trailing newline \n from choices
+  ##echo "choices [${choices}]"
+  choices="$(echo "${choices}" | sed -re 's/\\n$//')"
+  ##echo "choices [${choices}]"
+
+  ## get file selection(s) from yad separated by vbars in a string
+  files="$(echo -e ${choices} | yad ${yopt} --title "Files Just Printed" --no-markup --list --multiple\
+  --column="Select Files to Delete from [$pq]" --print-column=1 --width=400 --height=300)"
+
+  if [[ -z "${files}" ]]  ## no files from the command line selected for deletion
+  then
+    if (( DUPLEX_GUI ))
+    then
+      if (( DUPLEX_LAST_BATCH ))  ## If we're done all printing, display the message with a short timeout
+      then
+        yad ${yopt} --title "${script_name}" --info --width=220 --height=100\
+        --button=gtk-ok:0  --timeout="${dsptime_short}"\
+        --text "No files selected - Nothing deleted"
+        rc=0
+      else                        ## Otherwise, display it with a quit option and no timeout
+        yad ${yopt} --title "${script_name}" --info --width=220 --height=100\
+        --button=gtk-ok:0 --button=gtk-quit:1 \
+        --text "No files selected - Nothing deleted"
+        rc=$?
+      fi
+      
+      if (( rc ))  ## The user selected the quit option
+      then
+        rc=2
+        yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --width=220 --height=100\
+        --text "Quitting at user request" --timeout="${dsptime_long}"
+      fi
+    else  ## Script was not called by another duplex script, so there's nowhere to go back to
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --width=220 --height=100\
+      --text "No files selected - Nothing deleted" --timeout="${dsptime_short}"
+      rc=0
+    fi
+  else  ## Files from the command line were selected for deletion
+    ## delete the vbars and quote the file names to handle embedded blanks
+    files=$(echo ${files} | sed -e 's/^/\"/' -e 's/|./\" \"/g' -e 's/|$/\"/')
+    ${e} eval delete ${files}
+    
+    if (( DUPLEX_GUI ))  ## script was called from another duplex script
+    then
+      if [[ -z "$(ls .)" ]] || (( DUPLEX_LAST_BATCH )) ## If print queue is empty or selection is done
+      then
+        yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --width=220 --height=100\
+        --text "Selected print files deleted" --timeout="${dsptime_short}"
+        rc=0
+      else  ## There be more batches, so give the user a way to quit
+        yad ${yopt} --title "${script_name}" --info --width=220 --height=100\
+        --button=gtk-ok:0 --button=gtk-quit:1 \
+        --text "Selected print files deleted"
+        rc=$?
+        if (( rc ))  ## The user wants to quit printing
+        then
+          rc=2
+          yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --width=220 --height=100\
+          --text "Quitting at user request" --timeout="${dsptime_long}"
+        fi
+      fi
+    else  ## Script was not called from another duplex script, so there's nowhere to return to
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --width=220 --height=100\
+      --text "Selected print files deleted" --timeout="${dsptime_short}"
+      rc=0
+    fi
+  fi
+fi
+
+##echo "leaving krmpq with rc [$rc]"
+exit $rc

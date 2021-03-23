@@ -1,0 +1,99 @@
+#!/bin/bash
+## klprm - Choose jobs to kill jobs in lp print queue
+## Copyleft 12/25/2015 - Joseph J. Pollock - JPmicrosystems
+##   Last modified 12/27/2015
+
+## Usage is klprm [<job number> ... ]
+
+## If no arguments (job numbers) are specified, then all 
+## jobs are offered for deletion
+##
+## Job number arguments are provided so other scripts
+## can preselect which jobs should be offered for deletion
+## (e.g. just the ones they created before a problem occurred)
+
+function non_numeric {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [ -z "${1}" ] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [ -z "${var}" ]
+  return $?
+}
+
+script_name="$(basename $0)"
+title="${script_name}"
+yopt=(--center --on-top --title "${title}")
+yyes="OK"
+yno="Cancel"
+dsptime=20  ## yad message timeout interval
+dsptime2=10 ## for non-fatal errors in loop
+
+e='' ## live run
+##e='echo ' ## debug - DRYRUN
+
+noargs=1 ## no job numbers on command line
+
+(( $# )) && noargs=0 ## there are job numbers on the command line
+
+if (( noargs ))
+then
+  if [[ -z "$(lpstat)" ]]
+  then
+    yad "${yopt[@]}" --text="No jobs in lp print queue - quitting" --button=gtk-ok:0 --timeout=${dsptime}
+    exit 0
+  fi
+  range="$(echo -e "$(lpstat | cut -d ' ' -f 1 | cut -d '-' -f 2)" | yad "${yopt[@]}" --no-markup --list --multiple \
+    --column="Select jobs in lp print queue to Delete" --print-column=1 --width=300 --height=300)"
+  if (( $? )) || [[ -z "${range}" ]]
+  then
+    yad "${yopt[@]}" --text="No jobs selected - quitting" --button=gtk-ok:0 --timeout=${dsptime}
+    exit 0
+  fi
+
+  range=($(sed -e 's/|//' -e 's/\n/ /' <<< "${range}")) ## get rid of the vbars and newlines and put in array
+else
+  range=()
+  for job in "${@}"
+  do
+    non_numeric "${job}"
+    if (( $? ))
+    then
+      yad "${yopt[@]}" --text="Job number [${job}] must be numeric - aborting" --button=gtk-ok:0 --timeout=${dsptime}
+      exit 1
+    fi
+    
+    range=(${range[@]} ${job})
+  done
+  
+  if (( ! ${#range[@]} ))
+  then
+    yad "${yopt[@]}" --text="No jobs selected - quitting" --button=gtk-ok:0 --timeout=${dsptime}
+    exit 0
+  fi
+
+fi
+
+errors=0
+##echo "range [${range}]" ## debug
+for job in ${range[@]}
+do
+  msg="$(${e} lprm "${job}" 2>&1)"
+  if (( $? ))
+  then
+    yad "${yopt[@]}" --text="${msg}" --button=gtk-ok:0 --timeout=${dsptime2}
+    (( errors++ ))
+  fi
+done
+
+text="Selected lp print jobs deleted"
+if (( errors ))
+then
+  text="${text} - with [${errors}] error"
+  (( errors > 1 )) && text="${text}s"
+fi
+
+yad "${yopt[@]}" --text="${text}" --button=gtk-ok:0 --timeout=${dsptime}
+exit 0

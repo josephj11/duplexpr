@@ -1,0 +1,828 @@
+#!/bin/bash
+#####################################################
+## kmprb                                           ##
+## Usage: kmprb [-ps num] [-1 [-rt]]               ##
+##              [-b num | -B ]                     ##
+##              [ <file> ... ]                     ##
+##   -ps num override default print strategy       ##
+##      with strategy num                          ##
+##                                                 ##
+##   -1 call kmprb_one to print all 1 page jobs    ##
+##      first                                      ##
+##                                                 ##
+##   -rt reformat text files before printing       ##
+##                                                 ##
+##   -b - break printing into batchs of no more    ##
+##      than num sheets                            ##
+##                                                 ##
+##   -B - same as -b, but get num interactively    ##
+##                                                 ##
+##   If -1 is specified, kmprb_one is called       ##
+##   to allow the user to print all 1 page jobs    ##
+##   first. -rt will be passed to kmprb_one to     ##
+##   reformat text files with dprint               ##
+##                                                 ##
+##   If <file> ... is specified, then just those   ##
+##   files (from the print queue) are offered for  ##
+##   printing                                      ##
+##   Otherwise, all files in the print queue are   ##
+##   offered                                       ##
+##                                                 ##
+## Copyright (c) 18 May 2017  Joseph J. Pollock    ##
+##   JPmicrosystems - josephj at main.nc.us        ##
+##                                                 ##
+## Last modified 08/02/2018                        ##
+##                                                 ##
+## This program is free software; you can          ##
+## redistribute it and/or modify it under the      ##
+## terms of the GNU General Public License as      ##
+## published by the Free Software Foundation;      ##
+## either version 2 of the License, or             ##
+## (at your option) any later version.             ##
+##                                                 ##
+## This program is distributed in the hope         ##
+## that it will be useful, but WITHOUT ANY         ##
+## WARRANTY; without even the implied warranty     ##
+## of MERCHANTABILITY or FITNESS FOR A             ##
+## PARTICULAR PURPOSE. See the GNU General         ##
+## Public License for more details.                ##
+##                                                 ##
+## You should have received a copy of the          ##
+## GNU General Public License along with this      ##
+## program; if not, write to                       ##
+##    the Free Software Foundation, Inc.           ##
+##    59 Temple Place - Suite 330                  ##
+##    Boston, MA  02111-1307, USA                  ##
+#####################################################
+
+function user_abort () {
+  ## clean up loose ends from user abort
+  ## If we get clobbered, there should be a message
+  ## But it probably shouldn't be a gui message
+  ##
+  echo
+  echo "  Aborted by User"
+  echo
+  rc=2
+  quit
+}
+
+function non_numeric () {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [[ -z "${1}" ]] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [[ -z "${var}" ]]
+  return $?
+}
+
+function get_print_file_type () {
+  ## What type of printable? file is $1
+  ## Return 0 on success
+  ##        1 on failure
+  ## Return print_file_type
+  ##          0 if file does not exist
+  ##               or can't be read
+  ##          1 if file is PostScript
+  ##          2 if file is text
+  ##          3 if file is PDF
+  ##          255 if other
+
+  local str
+
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    print_file_type=0
+    return 1
+  fi
+
+  str=$(file -Lb "${1}")
+  ## echo "str=["${str}"]"
+  case "${str}" in
+    *"PostScript"*"text"*)
+      print_file_type=1
+      return 0
+      ;;
+    
+    *"text"*)
+      print_file_type=2
+      return 0
+      ;;
+    
+    *"PDF"*)
+      print_file_type=3
+      return 0
+      ;;
+    
+    *)
+      print_file_type=255
+      return 1
+      ;;
+  esac
+}
+
+function text_page_ct () {
+  enscript -B -Z --silent --word-wrap --margins=$margins -f${body_font}@${font_size} -F${header_font}@${font_size} -o ${tmpfile} "${1}"
+  ps_page_ct "${tmpfile}"
+  return $?
+}
+ 
+function page_count () {
+ 
+  unset page_ct
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    return 1
+  fi
+
+  get_print_file_type "${1}"
+  case "${print_file_type}" in
+    1)  ## PostScript
+      ps_page_ct "${1}"
+      return $?
+      ;;
+    
+    3)  ## PDF
+      pdf_page_ct "${1}"
+      return $?
+      ;;
+    
+    *)  ## Anything else fails 
+      return 1
+      ;;
+  esac
+  
+}
+
+function pdf_page_ct () {
+  local magic page_ct0 rc
+
+  if [[ ! -r "${1}" ]]
+  then
+    return 1 
+  fi
+
+  magic="$(head -1 "${1}" | cut -d '-' -f 1)"
+  if [[ "${magic}" != "%PDF" ]]
+  then
+    return 1 
+  fi
+
+  page_ct0=$(pdfinfo "${1}" 2>/dev/null | grep 'Pages:' | awk '{print $2}')
+  rc=$?
+  (( rc )) && return ${rc}
+  if (( page_ct0 ))
+  then
+    page_ct=${page_ct0}
+    return 0
+  fi
+
+  return 1
+}
+
+function ps_page_ct () {
+  ## extract page count from postscript file
+  ## Return   0 on success
+  ##          1 on failure
+  ##        Number of pages in page_ct (unset if not found)
+  ## This is totally seat of the pants - no guarantees
+  ## First, try to find it at the tail of the file.
+  ## If that fails, try at the head
+  ## If that fails, count the nummber of showpage commands and cross your fingers
+  ## This method is not guaranteed to work because one showpage could be in a function
+  ## called repeatedly, etc.
+
+  local args line page_ct0
+
+  ##echo starting page count  ## debug  
+  unset page_ct page_ct0  ## Clear the return result in case an error occurs
+
+  line=$(tail -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr ## debug  
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if (( page_ct0 ))
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## If at first you don't succeed, try, try again 
+  line=$(head -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr ## debug  
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if [[ "${page_ct0}" -gt 0 ]]
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## The third time is the charm
+  page_ct0="$(grep -c 'showpage' "${1}" 2>/dev/null)"
+  ##page_ct0="$(grep -c 'HiResBoundingBox' "${1}" 2>/dev/null)"
+  if (( ! $? )) && (( page_ct0 ))
+  then
+    page_ct="${page_ct0}"
+    return 0
+  fi
+
+  return 1
+}
+
+function process_batch () {
+  ## Process the batch and clear it out
+  mprb_args=(
+    "${opts[@]}"
+    "${print_list[@]}"
+  )
+  
+  ("${script_path}/mprb" "${mprb_args[@]}" 2>&1 ; echo -e "\nSelect OK or Press Ctrl+Enter when done") | yad ${yopt} --tail --no-markup \
+  --title "Printing Files - Wait until done" \
+  --button=gtk-ok:0 --button=gtk-cancel:1 \
+  --width=400 --height=500 --text-info
+  rc_yad=$?  ## If user pressed Cancel, etc. in main yad Printing dialog
+  if [ -r "${mprb_status}" ] ## handle it if mprb fails so badly it doesn't return any status at all
+  then
+    rc="$(< ${mprb_status})"
+  else
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220 --height=100\
+    --text "failed to open mprb status file" --timeout="${dsptime_error}"
+    rc=9
+  fi
+
+  if (( rc ))
+  then
+    text="mprb failed with error code [${rc}]"
+    (( rc == 2 )) && text="User Cancelled Printing"
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220 --height=100\
+    --text "${text}" --timeout="${dsptime_long}"
+    quit
+  fi
+
+  if (( rc_yad ))  ## User pressed Cancel, etc.
+  then
+    rc=${rc_yad}  ## Put the status where quit() will find it
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220 --height=100\
+    --text "User Cancelled Printing [${rc}]" --timeout="${dsptime_long}"
+    quit
+  fi
+
+  ## Now Delete any unneeded print files
+  ## Need to tell krmpq if last selected file was processed
+
+  eval "${script_path}/krmpq" $( < "${files_printed}" )
+  rc=$?
+  if (( rc ))  ## let user quit gracefully at the end of a sub-batch
+  then
+    (( rc != 2 )) && yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220\
+    --height=100 --text "Aborted Printing [${rc}]" --timeout="${dsptime_long}"
+    quit
+  fi
+  
+  ## Reset for next batch
+  JOBS=0
+  unset print_list
+  sheets=0
+}
+
+function quit () {
+  ## clean up loose ends from user abort
+  rm -f "${files_printed}"
+  rm -f "${files_selected}"
+  rm -f "${tmpfile}"
+  unset DUPLEX_GUI  ## Clear the environment
+  exit "${rc}"
+}
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+function print_selections_empty () {
+  local rc
+  ## c style - 1=yes 0=no
+  if (( preset ))
+  then
+    [[ -n "$(ls "$@" 2>/dev/null)" ]] ## If the print queue selections are empty (reversed test)
+  else
+    [[ -n "$(ls .)" ]] ## If the print queue is empty (reversed test)
+  fi
+  rc=$?
+  return "${rc}"
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+script_error=9  ## for non-file errors
+debug_out="/dev/stderr"  ## debug - so debug output always has somewhere to go
+##debug_out="$HOME/temp/debug_output_kmprb.txt"  ## debug
+##exec 5> "$debug_out"   ##  debug
+##BASH_XTRACEFD="5"           ##  debug
+##source "${HOME}/bin/bash_trace" ## debug - TRACE
+
+trap 'user_abort' 2  ## Call user_abort() if user presses ctrl-c
+script_name="$(basename $0)"  ## path stripped name of this script
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+dsptime_short=5  ## yad timeout for normal messages
+dsptime_long=10  ## yad timeout for exception messages
+dsptime_error=30 ## yad timeout for error messages
+yopt='--center --on-top'
+yyes="OK"
+yno="Cancel"
+
+config="${HOME}/.duplexpr"
+default_batch_size=16 ## Offer this batch size by default if there are at least that many sheets to print
+                      ## defined here in case it's not in the config file
+
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Missing config file ${config}"\
+  --width=220 --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+source "${config}"
+if (( $? ))
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Bad config file ${config}" --width=220\
+  --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+files_printed="${tp}/mprb_files_printed"    ## *fixed* name temp file to retrieve list of files printed (from mprb)
+files_selected="${tp}/kmprb_files_selected" ## temp file to store list of files selected for printing
+mprb_status="${tp}/mprb_status"             ## *fixed* name temp file to return exit status (when called by a script)
+tmpfile="${tp}/kmprb_work"                  ## temp file for enscript output
+opts=()                                     ## Options to pass to kmprb_one or dprint 
+export DUPLEX_GUI=1  ## Tell called scripts that they're nested in the duplex system
+
+## enscript parameters
+## In moderate point sizes (12+), the header font may need to be proportional
+## To show the whole header
+## A non-proportional font for the body works best for structured text
+body_font="Luxi-Mono"  ## font for enscript for non-postscript files
+header_font="Times-Roman"  ## font for enscript for non-postscript files
+font_size=14  ## point size for enscript
+margins="50:50:50:50" ## 100ths of inch top, bottom, left, right for enscript
+
+cd "${pq}"
+if (( $? ))
+then
+  yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Can't access print queue [${pq}]"\
+  --width=220 --timeout="${dsptime_error}"
+  exit "${script_error}"
+fi
+
+## Allow user to override default print strategy
+if [ "$1" == "-ps" ]
+then
+  shift
+  non_numeric "${1}"
+  if (( $? ))
+  then
+    yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="-ps requires a print strategy number"\
+    --width=220 --timeout="${dsptime_error}"
+    exit "${script_error}"
+  fi
+  opts=("${opts[@]}" "-ps" $1)
+  shift
+fi
+
+one=0
+reformat=0
+## Allow user to print all one page jobs first
+if [ "$1" == "-1" ]
+then
+  one=1
+  shift
+  if [[ "$1" == "-rt" ]]
+  then
+    reformat=1  ## reformat text files with dprint
+    shift
+  fi
+
+fi
+
+batch=0    ## Don't break printing into batches
+max_sheets=
+## Allow user to print all one page jobs first
+if [ "$1" == "-b" ]
+then
+  if (( batch ))
+  then
+    yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Cannot specify both -b and -B" \
+    --width=220 --timeout="${dsptime_error}"
+    exit "${script_error}"
+  fi
+  
+  batch=1  ## Break printing into batches
+  shift
+  non_numeric "${1}"
+  if (( $? ))
+  then
+    yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="-b requires max sheet count per batch" \
+    --width=220 --timeout="${dsptime_error}"
+    exit "${script_error}"
+  fi
+  max_sheets=$1
+  shift
+fi
+
+ask_batch=0  ## don't query user for batch size
+if [ "$1" == "-B" ]
+then
+  if (( batch ))
+  then
+    yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Cannot specify both -b and -B" \-
+    -width=220 --timeout="${dsptime_error}"
+    exit "${script_error}"
+  fi
+  
+  batch=1  ## Break printing into batches
+  ask_batch=1 ## ask user for batch size
+  
+  shift
+fi
+
+## This has to come after all arguments except files have been processed and shifted off
+## Determine if files were specified on the command line
+preset=0
+(( $# )) && preset=1
+
+print_selections_empty
+if (( $? ))  ## establish that there are files to print
+then
+  text="No selectable files to print in [$pq]"
+  yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --text="${text}" --timeout="${dsptime_error}"
+  rc=0
+  quit
+fi
+
+if (( one ))  ## Print all the one page print jobs first
+then
+  ##echo "PATH [$PATH]" >> "$debug_out"  ## debug
+  cmd=("${script_path}/kmprb_one")
+  (( reformat )) && cmd=("${cmd[@]}" "-rt")
+  ##echo "cmd [${cmd[@]}]" >>"$debug_out"  ## debug
+  ${cmd[@]}
+  rc=$?
+  if (( rc ))  ## If kmprb_one returned an error code
+  then         ## Then it already issued the appropriate message and we just need to get out
+    if [[ "$rc" == "${script_error}" ]] || [[ "$rc" == 2 ]]  ## don't need another error message
+    then
+      quit
+    fi
+    ## If we get here, an unexpected error code was returned, so display it
+    yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="${cmd} failed with unexpected error code [${rc}]" \
+    --width=220 --timeout="${dsptime_error}"
+    quit
+  fi
+  
+  print_selections_empty
+  if (( $? ))  ## If kmprb_one processed and deleted them all, we're done
+  then
+    rc=0
+    quit
+  fi
+
+fi
+
+## Quit if print queue is empty
+print_selections_empty
+if (( $? ))  ## If there were no print files to start with, then complain, but it's not an error
+then
+  text="No selectable files to print in [$pq]"
+  yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --text="${text}" --timeout="${dsptime_error}"
+  rc=0
+  quit
+fi
+
+## Preview Print Queue
+if (( preset ))  ## if files were specified on the command line
+then
+  ## allow kmprb to be called from any working directory with pathed arguments
+  ## to files in the print queue
+  ## E.g. kmprb $PQ/0{1..9}
+  ## so files can still be specified by bash expansions
+  ## like kmprb $PQ/0{1..9}
+  ## strip the paths, if any, get them one per line with ls, and throw quotes around them
+  choices="$(ls "${@##*/}" | sed -re 's/.*/"&"/')"
+  ##echo -e $choices ## debug
+else
+  choices="$(find . -maxdepth 1 -type f ! -name '\.*' -printf '"%f"\n' | sort)"
+fi
+
+##echo -e "choices [${choices}]" ## debug
+
+## Test for only bogus files specified on the command line
+if (( ! ${#choices} ))  ## If there were no print files to start with, then complain, but it's not an error
+then
+  text="No selectable files to print in [$pq]"
+  yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --text="${text}" --timeout="${dsptime_error}"
+  rc=0
+  quit
+fi
+
+choices="$(echo ${choices} | sed -r -e 's/\n/\" /')"
+##echo -e "choices [${choices}]" ## debug
+message="$(eval ${script_path}/mprb -i ${choices})\n
+Select ${yyes}\n\tor Press Ctrl+Enter to Continue\n\n     Select ${yno} to Skip Printing"
+echo -e "${message}" | yad ${yopt} --tail  --no-markup \
+--title "Preview Print Queue  [$pq]" --width=500 --height=500 --text-info \
+--button=gtk-ok:0 --button=gtk-cancel:1
+if (( $? ))  ## user quitting is not an error
+then
+  rc=0
+  quit
+fi
+
+## Quit if all the files are empty
+if [[ "$(eval head -1 -q -- ${choices} | wc -l)" == 0 ]]
+then 
+  text="Nothing to print [$pq]"
+  yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top --text="${text}" --timeout="${dsptime_short}"
+  rc=0
+  quit
+fi
+
+title="Print Queue [$pq]"
+if (( preset ))
+then
+  files="$(echo -e "${choices}" | sed -e 's/\" \"/\n/g' -e 's/\"//g' | yad ${yopt} --title "${title}" \
+    --button=gtk-ok:0 \
+  --no-markup --list --multiple --column="Select Files to Print" --print-column=1 --width=500 --height=300)"
+else  
+  files="$(find . -maxdepth 1 -type f ! -name '\.*' -printf '%f\n' | sort | yad ${yopt} --title "${title}" \
+  --no-markup --list --multiple --column="Select Files to Print" --print-column=1 --width=500 --height=300)"
+fi
+##echo -e ${files} ## debug
+##read -p "pause original file list"  ## debug
+if [ -z "${files}" ]
+then
+  yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top --width=220 --height=100 \
+  --text "No Files Selected - Quitting" --timeout="${dsptime_short}"
+  rc=0
+  quit
+fi
+
+## delete the vbars and get the file names one per line and put them in an array without leading "./" or trailing newlines
+mapfile -t files2 < <(echo ${files} | sed -e 's/\.\///g' -e 's/|./\n/g' -e 's/|$//')
+
+##echo -e "files2 ${files2[@]}" ## debug
+##echo "count = [${#files2[@]}]"  ## debug
+##echo "batch [${batch}]" ## debug  
+##read -p "pause processed file list"  ## debug
+if (( batch ))
+then
+  sheets=0
+  jobs=0
+  total_sheets=0
+  
+  ## count all the sheets in the selected jobs
+  ## page_count() treats text files as an error
+  ## so handle those separately
+  for file in "${files2[@]}"
+  do
+    ##echo "file [${file}]"  ## debug
+    get_print_file_type "${file}"
+    if [[ ${print_file_type} == 2 ]]
+    then
+      text_page_ct "${file}"
+      rc=$?
+    else
+      page_count "${file}"
+      rc=$?
+    fi
+
+    if (( ! rc ))  ## Don't try to update total sheets if we didn't get a page count
+    then
+      ##echo "file type [${print_file_type}] pages [${page_ct}]"  ## debug
+      (( sheets = page_ct / 2 ))
+      (( page_ct % 2 )) && (( sheets++ ))
+      (( total_sheets += sheets ))
+      ##echo "total_sheets [${total_sheets}]" ## debug
+    fi
+  done
+  
+  if (( ! total_sheets ))
+  then
+    text="Nothing to print [$pq]"
+    yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top --text="${text}" --timeout="${dsptime_long}"
+    rc=0
+    quit
+  fi
+  
+  if (( ask_batch ))
+  then
+    sheets_per_batch=${default_batch_size}
+    (( sheets_per_batch > total_sheets )) && sheets_per_batch=${total_sheets}
+    max_sheets=$(yad ${yopt} --title "${script_name}" --entry --entry-text="${sheets_per_batch}"\
+    --button=gtk-ok:0 --button=gtk-cancel:1 \
+    --entry-label="Sheets per batch " --on-top --width=220 --height=100 --text "${total_sheets} sheets to print
+    ")
+    if (( $? ))
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Sheets per batch must be entered" --timeout="${dsptime_error}"
+      rc=1
+      quit
+    fi
+
+    non_numeric "${max_sheets}"
+    if (( $? ))
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Sheets per batch must be unsigned numeric" --timeout="${dsptime_error}"
+     rc=1
+      quit
+    fi
+
+    if (( max_sheets < 1 ))
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Sheets per batch must be > 0" --timeout="${dsptime_error}"
+      rc=1
+      quit
+    fi
+
+  fi
+  
+  ## NOTE: Tried piping files into the loop, but that created a subshell
+  ##       and threw out all the results
+  
+  echo ${files} | sed -e's/\.\///g' -e 's/|./\n/g' -e 's/|$//' > "${files_selected}"
+  ##echo "Files selected" ## debug
+  ##cat "${files_selected}" ## debug
+  ##read -p "pause selected file list"  ## debug
+  sheets=0  ## this was used above
+  last_file="$(tail -1 ${files_selected})" ## last file name so we know if the current full batch is the last one
+  ##echo "last_file [${last_file}]"  ## debug
+  while read file
+  do
+    ##echo "file [${file}]" ## debug
+    fn="${file}"  ## save file name for messages
+
+    [[ "${file}" == "${last_file}" ]] && export DUPLEX_LAST_BATCH=1 ## Tell krmpq that we're done printing
+    if [ ! -e "${file}" ]
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Skipping ["${file}"] - not found" --timeout="${dsptime_short}"
+      continue
+    fi
+
+    if [ ! -s "${file}" ]
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Skipping ["${file}"] - empty" --timeout="${dsptime_short}"
+      continue
+    fi
+
+    if [ -d "${file}" ]
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Skipping ["${file}"] - directory" --timeout="${dsptime_short}"
+      continue
+    fi
+    
+    get_print_file_type "${file}"
+    if (( $? ))     ## Something we can't handle
+    then            ## then bypass it
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Skipping ["${file}"] - Can't process this file" --timeout="${dsptime_short}"
+      continue
+    fi
+
+    temp_file="${file}"
+    if [ "${print_file_type}" -eq 2 ]     ## If it's text
+    then                                  ## Convert it to postscript
+      enscript -B -Z --silent --word-wrap --margins=$margins -f${body_font}@${font_size} -F${header_font}@${font_size} -o ${tmpfile} "${file}"
+      temp_file="${tmpfile}"
+    fi
+
+    page_count "${temp_file}"   ## Get Number of pages to print
+    if (( $? ))
+    then
+      yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0 --on-top\
+      --text="Skipping ["${fn}"] - Can't get a page count for it" --timeout="${dsptime_short}"
+      continue
+    fi
+
+    ##echo "page_ct = [${page_ct}]" ## debug
+    (( job_sheets = page_ct / 2 ))   ## half fronts, half backs
+    ##echo "job_sheets = [${job_sheets}]" ## debug
+
+    (( page_ct % 2 )) && (( job_sheets++ )) ## add one for the last odd page
+    ##echo "job_sheets = [${job_sheets}]" ## debug
+    
+    (( new_sheets = sheets + job_sheets ))  ## Number of sheets in batch *if* we add the current file
+    ##echo "new_sheets = [${new_sheets}]" ## debug
+    if (( new_sheets < max_sheets )) ## see if we're still within maximum batch size
+    then                           ## Just add the file to the batch and keep looping
+      print_list[${jobs}]="${file}"
+      ##echo "Building list ${#print_list[@]} ${print_list[@]} jobs ${jobs}" ## debug
+      sheets=${new_sheets}
+      (( jobs++ ))
+      ##echo "sheets = [${sheets}]" ## debug
+      ##echo "jobs = [${jobs}]" ## debug
+      continue
+    fi
+
+    ## When we get here, the current batch will either be filled up by adding the current file
+    ## or adding the current file would exceed the batch size
+    ## so we'll print the batch as is and add the current file to the next batch
+    
+    ## Make an exception if the batch is empty and the current file exceeds the batch size by itself
+    ## and add it to the batch anyway, so it gets printed by itself
+    
+    if (( new_sheets == max_sheets )) || (( jobs == 0 )) ## Filled up a batch exactly or 1st file is too big
+    then                                             ## add it to complete the batch
+      print_list[${jobs}]="${file}"
+      file="" ## So we know it's been added to the current batch and don't put it in the next batch
+      ##echo "Full or big one ${#print_list[@]} ${print_list[@]} jobs ${jobs}" ## debug
+    fi
+    
+    process_batch
+    
+    ## Handle current file that was not added to last batch
+    if [ -n "${file}" ]             ## The current file was not added to the last batch
+    then
+      print_list[${jobs}]="${file}" ## So add it to the next batch
+      ##echo "Adding current file to new batch ${#print_list[@]} ${print_list[@]} jobs ${jobs}" ## debug
+      sheets=${job_sheets}
+      (( jobs++ ))
+      ##echo "sheets = [${sheets}]" ## debug
+      ##echo "jobs = [${jobs}]" ## debug
+    fi
+  done < "${files_selected}"
+  
+  ## If the last batch didn't fill up, then it hasn't been printed yet
+  
+  ##echo "Final batch ${#print_list[@]} ${print_list[@]} jobs ${jobs}" ## debug
+  ##read -p "After loop"  ## debug
+  ## Are there any files left to print?
+  if (( ${#print_list[@]} ))
+  then
+    export DUPLEXPR_LAST_BATCH=1 ## Tell krmpq that there are no more batches coming
+    process_batch
+  fi
+   
+else ## Process non-batch mode
+  ## This isn't the same as process_batch - uses eval and files2 instead of print_list[@]
+  mprb_args=(
+    "${opts[@]}"
+    ${files2[@]}
+  )
+
+  (eval "${script_path}/mprb" "${mprb_args[@]}" 2>&1 ; echo -e "\nSelect OK or Press Ctrl+Enter to continue") | \
+  yad ${yopt} --tail  --no-markup \
+  --title "Printing Files - Wait until done" --width=400 --height=500 --text-info \
+  --button=gtk-ok:0 --button=gtk-cancel:1
+  rc_yad=$?
+  ##echo "rc_yad [${rc_yad}]"  ## debug
+  if [ -r "${mprb_status}" ] ## handle it if mprb fails so badly it doesn't return any status at all
+  then
+    rc="$(< ${mprb_status})"
+  else
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220\
+    --height=100 --text "failed to open mprb status file" --timeout="${dsptime_error}"
+    rc="${script_error}"
+  fi
+  
+  ##echo "rc [${rc}]"  ## debug
+  if (( rc || rc_yad ))
+  then
+    text="mprb failed with error code [${rc}]"
+    (( rc == 2 || rc_yad )) && text="User Quit printing"
+    yad ${yopt} --title "${script_name}" --error --button=gtk-ok:0 --on-top --width=220\
+    --height=100 --text "${text}" --timeout="${dsptime_error}"
+    quit
+  fi
+
+  ## Now Delete any unneeded print files
+  ## but only call krmpq if some files were printed
+  ## because, otherwise, it will offer to delete all files
+
+  ##wc -l < "${files_printed}" ## debug
+  export DUPLEX_LAST_BATCH=1 ## Tell krmpq that there are no more batches coming
+  (( $(wc -l < "${files_printed}"))) && eval "${script_path}/krmpq" $( < "${files_printed}" )
+  rc=$? ## don't need this - just for tracing
+
+fi
+
+rc=0
+quit

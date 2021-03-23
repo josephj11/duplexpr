@@ -1,0 +1,77 @@
+#!/bin/bash
+## dprintf - dprint to print queue
+## Copyleft 11/03/2016
+## last modified 03/16/2018
+## Usage dprintf <file>
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+debug_out="/dev/stderr"  ## debug - so debug output always has somewhere to go
+##debug_out="$HOME/temp/debug_output_dprintf.txt"  ## debug
+##exec 5> "$debug_out"   ##  debug
+##BASH_XTRACEFD="5"           ##  debug
+##source "${HOME}/bin/bash_trace" ## debug - TRACE
+
+name="${0##*/}"
+##echo "name is $name" > "${debug_out}" ## debug
+usage="Usage ${name} [dprint options] file"
+script_error=9
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+##echo "script_path is $script_path" >> "${debug_out}"  ## debug
+
+## from https://www.cyberciti.biz/faq/linux-unix-bsd-apple-osx-bash-get-last-argument/
+for last in "$@"; do :; done  ## Get last argument to script
+
+if [[ ! -r "${last}" ]]  ## file name is last parameter
+then
+  echo "$usage"
+  exit 1
+fi
+
+config="${HOME}/.duplexpr"
+
+## Access the duplexpr configuration file
+if [[ ! -r  $config ]] ## debug
+then
+  echo "Missing config file ${config}"
+  exit "${script_error}"
+fi
+
+source "${config}"
+if (( $? ))
+then
+  echo "Bad config file ${config}"
+  exit "${script_error}"
+fi
+
+"${script_path}"/pqnext -q ## Get next file name in clipboard without displaying anything
+rc=$?
+if (( rc ))
+then
+  echo "pqnext failed with error code ${rc}"
+  exit $rc
+fi
+
+## Must have xclip
+hash xclip 2>/dev/null
+rc=$?
+if (( rc ))
+then
+  echo "xclip isn't installed"
+  exit "${script_error}"
+fi
+
+num="$(xclip -selection clipboard -o)"
+rc=$?
+if (( rc ))
+then
+  echo "xclip  failed with error code ${rc}"
+  exit $rc
+fi
+
+"${script_path}"/dprint -o "$pq/$num" "$@"

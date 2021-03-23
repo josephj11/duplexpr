@@ -1,0 +1,279 @@
+#!/bin/bash
+###################################################
+## dprint                                        ##
+## print text files in emulated duplex using     ##
+## enscript and dplx/duplex                      ##
+## (dplx gets invoked by $HOME/.enscriptrc)      ##
+##                                               ##
+## Default spooler and other settings are        ##
+## specified in $HOME/.enscriptrc                ##
+##                                               ##
+## Calling sequence:                             ##
+##  dprint                                       ##
+##  [-o <outfile>] [-font <font>]                ##
+##  [-points <points>] [-land]                   ##
+##  [-title title]                               ##
+##  [<enscript-options>] [<print-file> | -]      ##
+##                                               ##
+##  Options may now be in any order, BUT the     ##
+##  input file name MUST be the last parameter.  ##
+##  Omit the file name or use - to use           ## 
+##  standard input (stdin)                       ##
+##                                               ##
+## Copyright (c) 03 Nov 2014 Joseph J. Pollock   ##
+##   JPmicrosystems - josephj at main.nc.us      ##
+##                                               ##
+## Last Modified 07/30/2017                      ##
+##                                               ##
+## This program is free software; you can        ##
+## redistribute it and/or modify it under the    ##
+## terms of the GNU General Public License as    ##
+## published by the Free Software Foundation;    ##
+## either version 2 of the License, or           ##
+## (at your option) any later version.           ##
+##                                               ##
+## This program is distributed in the hope       ##
+## that it will be useful, but WITHOUT ANY       ##
+## WARRANTY; without even the implied warranty   ##
+## of MERCHANTABILITY or FITNESS FOR A           ##
+## PARTICULAR PURPOSE. See the GNU General       ##
+## Public License for more details.              ##
+##                                               ##
+## You should have received a copy of the        ##
+## GNU General Public License along with this    ##
+## program; if not, write to                     ##
+##    the Free Software Foundation, Inc.         ##
+##    59 Temple Place - Suite 330                ##
+##    Boston, MA  02111-1307, USA                ##
+## See: http://www.gnu.org/copyleft/gpl.html     ##
+###################################################
+
+function non_numeric () {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [[ -z "${1}" ]] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [[ -z "${var}" ]]
+  return $?
+}
+
+##################################
+########## Main Program ##########
+##################################
+
+## for double spacing, etc.  dprint -s 15 file
+
+##source $HOME/bin/bash_trace - TRACE
+script_error=9
+e="" ## live run
+##e="echo"  ## debug - DRYRUN
+unset IFILE OFILE OPTS OUT TITLE
+FONT="Times-Roman"  ## Default font for printing
+POINTS="12"         ## Default point size for printing
+ORIENTATION="-R"    ## portrait printing
+
+script_name="$(basename $0)"  ## path stripped name of this script
+config="${HOME}/.duplexpr"
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  echo "${script_name} - Missing config file ${config}"
+  exit "${script_error}"
+fi
+
+source "${config}"
+if (( $? ))
+then
+  echo "${script_name} - Bad config file ${config}"
+  exit "${script_error}"
+fi
+
+if [[ ! -r "${HOME}/.enscriptrc" ]]
+then
+  echo "${script_name} - Missing enscript configuration file ${HOME}/.enscriptrc"
+  exit "${script_error}"
+fi
+
+print_strategy=${current_print_strategy} ## Get default print strategy from config file
+
+ARGUMENTS=("$@")
+for (( I=0 ; I<$# ; I++ ))
+do
+  ARG="${ARGUMENTS[${I}]}"
+  NEXT="${ARGUMENTS[${I}+1]}"
+  case "${ARG}" in
+    # 
+    "-o")
+      if [[ -n "${NEXT}" ]]
+      then
+        OFILE="${NEXT}"
+        ((I++))  ## shift loop past value parameter
+        if [[ -e "${OFILE}" ]]
+        then
+          echo "dprint - output file [${OFILE}] already exists - aborting"
+          exit 1
+        fi
+      else
+          echo "dprint - -o with no file name specified - aborting"
+          exit "${script_error}"
+      fi
+    ;;
+    # 
+    "-font")
+      if [[ -n "${NEXT}" ]]
+      then
+        FONT="${NEXT}"
+        ((I++))  ## shift loop past value parameter
+      else
+          echo "dprint - -font with no font specified - aborting"
+          exit "${script_error}"
+      fi
+    ;;
+    # 
+    "-points")
+      if [[ -n "${NEXT}" ]]
+      then
+        non_numeric "${NEXT}"
+        if (( $? ))
+        then
+          echo "dprint - points must be numeric - aborting"
+          exit "${script_error}"
+        fi
+        POINTS="${NEXT}"
+        ((I++))  ## shift loop past value parameter
+      else
+        echo "dprint - -points with no point size specified - aborting"
+        exit "${script_error}"
+      fi
+    ;;
+    # 
+    "-land")
+      ORIENTATION="-r"    ## turn on landscape printing
+    ;;
+    # 
+    "-title")
+      if [[ -n "${NEXT}" ]]
+      then
+        TITLE="${NEXT}"
+        ((I++))  ## shift loop past value parameter
+      else
+          echo "dprint - -title with no title specified - aborting"
+          exit "${script_error}"
+      fi
+    ;;
+    # If it's not one of ours, pass it to enscript and hope for the best
+    # The input file name must be the last parameter or missing/- for stdin
+    *)
+      if (( I < $# - 1 ))    ## If we're not at the last parameter
+      then
+        OPTS="${OPTS} ${ARG}"  ## tack it on to pass to enscript
+      else                   ## else we are at the last parameter
+        if [[ "${ARG}" != "-" ]] ## and it has to be a dash for stdin 
+        then                 ## in which case we leave IFILE unset
+          if [[ -r "${ARG}" ]]  ## or it has to be a file which is readable
+          then
+            IFILE="\"${ARG}\""
+          else
+            echo "dprint - can't read input file [${ARG}] - aborting"
+            exit 1
+          fi
+        fi
+      fi
+    ;;
+  esac
+                                      
+done
+
+##echo "IFILE = [${IFILE}]" ## debug
+##echo "TITLE = [${TITLE}]" ## debug
+##echo "HEADER = [${HEADER}]" ## debug
+
+##HEADER="--header='"
+HEADER="--header='\$W \$T Page $% of $= " ## debug
+##echo "HEADER = [${HEADER}]" ## debug
+
+if [[ -z "${TITLE}" ]]
+then
+  if [[ -n "${IFILE}" ]]
+  then
+    ##echo "Not empty" ## debug
+    HEADER="${HEADER}\$n "
+    ##echo "HEADER = [${HEADER}]" ## debug
+  fi
+else
+  ##echo "Empty" ## debug
+  HEADER="${HEADER}${TITLE}"
+  ##echo "HEADER = [${HEADER}]" ## debug
+fi
+
+HEADER="${HEADER}'"  
+##FOOTER="--footer='| Page $% of $= | \$W \$T'"
+FOOTER="--footer='%FooterHeight: 36 This is a footer'"  ## debug - doesn't do anything yet
+##echo "HEADER = [${HEADER}]" ## debug
+##exit 0 ## debug
+##echo "OFILE = [${OFILE}]" ## debug
+if [[ -n "${OFILE}" ]]
+then
+  OUT="-p \"${OFILE}\""
+else
+  if [[ "${print_strategy}" == 0 ]]
+  then
+    echo "${script_name} - Incompatible with print strategy 0 (non-duplex)"
+    echo -e "\t\texcept when printing to file (-o file))"
+    exit "${script_error}"
+  fi
+fi
+  
+ENSCRIPT_ARGS=(
+  -Z
+  ${ORIENTATION}
+  --silent
+  --word-wrap
+  --margins=50:50:50:50
+  ${HEADER}
+  ${FOOTER}
+  -f${FONT}${POINTS}
+  -F${FONT}${POINTS}
+  ${OUT}
+  ${OPTS}
+  ${IFILE}
+)
+
+##echo eval enscript "${ENSCRIPT_ARGS[@]}"  ## debug
+$e eval enscript "${ENSCRIPT_ARGS[@]}"
+
+## If result was printed to a file, convert it from PostScript to a pdf
+## So other applications will see it to avoid accidentally overwriting it
+## in user print to file dialogs which only show pdf files
+if [[ -n "${OFILE}" && -r "${OFILE}" ]]
+then
+  ##echo "Making temp file from ["${tp}/${script_name}.XXXXXX"]" ## debug
+  tmpfile=$(/bin/mktemp -q "${tp}/${script_name}.XXXXXX.pdf")  # create temp file
+  if (( $? ))    # if create tempfile failed
+  then
+    echo -e "Can't create temp file [${tmpfile}]\n\nCheck permissions for ${tp}\n\nAborting..."
+    rc="${script_error}"
+    exit $rc
+  fi
+
+  ps2pdf "${OFILE}" "${tmpfile}"
+  if (( $? ))    # if converting to PDF failed
+  then
+    echo -e "Can't create PDF file\n\nCheck permissions or free space for ${tp}\n\nAborting..."
+    rc="${script_error}"
+    exit $rc
+  fi
+
+  mv "${tmpfile}" "${OFILE}"
+  if (( $? ))    # if putting converted file back failed
+  then
+    echo -e "Can't move converted PDF file [${tmpfile}] back to [${OFILE}]\n
+    Aborting..."
+    rm -f "${tmpfile}" "${OFILE}"
+    rc="${script_error}"
+    exit $rc
+  fi
+
+fi

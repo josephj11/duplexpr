@@ -1,0 +1,327 @@
+duplexpr Change Log
+
+13 August 2018 - duplex.0.3.1.1
+    mprb - fixed errors in print strategy 3 code (also used by kmprb)
+    INSTALL - added instructions for setting a default printer
+      Updated the PPA needed for installing yad
+    kmprbatches - (New) script which reports on how print jobs will be split into batches
+      of sheets given the default or a specified batch size - if batch printing is 
+      selected when using kmprb. Optionally, also simulates first printing all one page jobs
+      in their own batch (as kmprb's -1 option does) and only printing those print jobs
+      whose names are specified on the command line
+    Printer_Settings.pdf - HP Photosmart 4480 All-in-1 requires 180 degree horizontal
+      rotation before reinsertion for pass two printing
+    dot.duplexpr - Changed default_formfeed to default 0 to accomodate newer versions of CUPS/lp
+    pqnext - turned off selectable labels because whole contents was highlighted/selected
+    kmprb - fixed a bug when user specifies only non-existing files as arguments and the
+      print queue is not empty
+      detect if all selected jobs have been printed (when there are still jobs in the queue)
+      and tell krmpq not to offer the Quit option because we're already done
+    How_To_Request_A_New_Print_Strategy.pdf - reworked - elaborated on how to report on output stack
+      page order - invented PODL - a primative page order description language
+    Exploring_Print_Strategies.pdf - new - How to find the right strategy for your printer
+    Test_File_2_Even.pdf, Test_File_2_Odd.pdf - new  for use with Exploring_Print_Strategies.pdf
+    dot.duplexpr, krmpq, rmpq - Added delete_to_trash option which causes selected print files to
+      be deleted to Trash using trash-put (if it is installed) instead of rm
+      (Please verify that this works correctly on your system *before* relying on it.)
+
+18 March 2018 - duplex.0.3.1
+    Note: New config file, be sure to install and customize it as necessary - (mandatory).
+    Added new print strategy 3: Works with HP DeskJet 3630 All-in-One
+      Thanks to Julio Song for requesting this and testing it (beta version)
+    dot.duplexpr, dplx, dprint, duplex, mpr, mprb, - Redesign of print queue
+      and print strategy selection code to support extensibility and on the fly changes
+      (not used much yet.)
+    kmprb, kmprb_one - general  - return script_error if something besides a file goes south
+    Printer_Settings.pdf - New list of strategy settings by printer make and model
+    How_To_Request_A_New_Print_Strategy.pdf - New guide for requesting a new print strategy
+      and for documenting problems with an existing strategy
+    dprintf - added test - xclip must be installed, added code to find current print queue
+      didn't allow passing dprint parameters
+    rmpq - fixed error messsage text
+    duplex_set_pq() - added, but not used yet - change current print queue leaving the default alone
+    pqnext - fixed bug by adding mypath so it can find mprb
+      reworked - Finally supports variable length file numbers
+      no longer relies on PQ environment variable
+    All - Added - TRACE and - DRYRUN in comments on the lines where tracing and dryrun things happen
+      to make it easy to scan and make sure they're all set correctly for testing or production
+    kmprb - fixed all selected print files empty test
+      and don't complain if print queue becomes empty after kmprb_one runs
+      or if the user decides to quit in krmpq
+      Reworked internal handling of file parameters on the command line - way better
+    dprint - added script_error returns for non-print-file errors
+    krmpq - added script_error for non-print-file errors and added a bunch of comments
+    Test_File.ps - removed
+    Test_File.pdf, Test_File_Odd.pdf - added - Test_File.pdf replaces Test_File.ps
+      Test_File_Odd.pdf is for testing the transition from an odd page count job
+      to the next job within a batch
+    duplex - made --help exit with a zero status
+    dplx - exit with an error if -ps is specified with no print strategy number
+    extras.txt - New version of the print2file.py macro for use with AutoKey
+      works with new print dialogs and has several improvements including
+      support for longer file number/names
+    README - cut line length down to 90 characters - to avoid wrapping on sourceforge.
+    
+04 June 2017 - duplex.0.3.0.1
+    dplx, duplex, mpr - added error processing in dplx and duplex for mpr
+      distinguish between print file related errors (returns 1) and script related errors (returns script_error (9) )
+      mpr keeps going on print file related errors, but quits on script related errors
+      user abort - sigint/Ctrl+C is now treated as a script error
+      Improved page counting logic in mpr to only increment after successful printing
+    kmprb - don't update total_sheets if we didn't get a valid page count
+    kmprb, krmpq - If we just printed the last batch, don't ask the user about quitting and time out the deleted dialog
+    krmpq - If the print queue is empty after deleting files,
+          don't ask the user about quitting and time out the deleted dialog
+          Do the same if DUPLEX_LAST_BATCH is true (not zero - set by kmprb and kmprb_one)
+    mpr - added ynq so user can quit in the middle of a batch
+          added total sheets to mpr summary
+    mpr, mprb - added sheet count to Printing detail messages
+          changed those to use printf to right justify the  2-digit numbers
+    kmprb_one - changed print detail parsing to match the new layout
+    kmprb, kmprb_one, krmpq, mprb, pqnext - improved yad timeout values and code
+    duplex, dprint, kmprb_one - added test for missing enscript configuration file - $HOME/.enscriptrc
+          But only if enscript will be called for text files
+    dprint - Read .duplexpr and check default_print_strategy.
+          If it's non-duplex (0) and print to file (-o file) was not specified,
+          then it's an error because enscript calls dplx which will error out in duplex anyway
+          Files printed to disk (-o file) are now converted from PostScript to PDF.
+    dprintf - (New) Print text file directly to the print queue automatically using the next available file name/number
+          This will return a failure if xclip is not installed.
+    pqnext - Added -q (quiet) option which silently copies the next file name/number to the clipboard.
+          This will return a failure if xclip is not installed.
+    kmprb, .duplexpr - finally fixed print preview problem and removed default_preview from .duplexpr
+    dplx, dprintf, dprintm, kmprb, kmprb_one, mpr, mprb - replaced realpath with mypath
+    kmprb - changed dialogs to show pressing Ctlr+Enter in dialogs using --tail
+
+16 Jan 2017 - duplex.0.3
+    Enhancement release and bug fixes
+    kmprb, mprb - added print strategy 0 for non-duplex printing
+          mprb now returns 2 for a user quit (Quit) and kmprb issues an appropriate message
+    kmprb - Added new parameter -b num for sub-batch processing
+          Added -B - like -b, but get batch size by asking the user
+    dplx, duplex, kmprb, mprb - Added new print strategy 0 for non-duplex
+          changed a bunch of code to use (( )) instead of [ ] and other cleanup
+          Uses .duplexpr configuration file
+    kmprb, mprb, dplx - Added readable test for .duplexpr
+          also get default print strategy from .duplexpr
+    dplx, duplex - added error handling for print strategy 0
+          Changed GUI dialogs to text
+    duplex - added lp print job number message output, including for the FF page
+    dot_duplexpr - 
+          Added parameter for temp file directory (defaults to /tmp)
+          Added default_batch_size for -B parameter (defaults to 16 sheets per batch)
+          Added default_formfeed - 1 is to use them as before (default); 0 disables them
+            Still have to do one for one-page jobs - they didn't handle that
+          Added default_preview -
+            1 Always display the print preview
+            0 Skip the preview if there are more than 30 files in the print queue to avoid an old yad bug (default)
+    duplex, mprb - If default_formfeed == 0, then omit formfeeds for unmatched odd pages
+          Reworked ynq to accept a single keypress and to treat Enter as Yes
+    klprm - (new - standalone for now) GUI display of jobs in the users CUPS print queue - allows selected jobs to be deleted
+    dplx, kmprb, kmprb_one, mpr, mprb - added script_path in case the directory the scripts are in isn't in the PATH
+    kmprb, kmprb_one, krmpq - Export DUPLEX_GUI in kmprb and kmprb_one (new). If krmpq sees DUPLEX_GUI,
+          it offers a Quit option as part of the final (all/no files deleted) message(s) and returns a 2 if it is selected
+          kmprb_one passes this back to kmprb if it was called by it and kmprb uses it to quit printing
+          either after kmprb_one or after a sub-batch completes.
+          This lets the user stop printing after successfully completing part of the jobs without
+          compromising the part which was completed.
+          Useful when the user wants to discontinue printing - such as when printer toner/ink gets low
+    kmprb, kmprb_one, krmpq, mprb - prettied up yad calls, improved exit processing so scripts work when called
+          by other scripts. Added debugging code to direct bash tracing to separate files. This facilitates
+          debugging these scripts when they are not being run from a terminal (e.g. running from a desktop or panel icon).
+          This code is commented out in production.
+          Use realpath to get path to scripts - in case they're not in PATH - thanks to KDE5 ;(
+    kmprb, kmprb_one - use default_preview from .duplexpr to decide whether to attempt to preview more than 30 files
+    mprb - Changed to look at DUPLEX_GUI. If set, it displays a couple of messages using yad (like before).
+           If not set, it sends them to the terminal.
+    dplx, duplex - changed GUI dialogs to text
+    kmprb, kmprb_one, krmpq, mprb - Added explicit buttons to simple dialogs so that OK will be the default again instead of Cancel
+    kmprb - converted a bunch of text error messages to GUI error messages
+    mpr - added file not found test
+    Got rid of upper case variables in scripts and did a lot of other clean up
+    Documented fix for dialog problem caused by yad version upgrade
+
+02 Dec 2015 - duplex.0.2.3.3
+   Bug fix release. Thanks to user "step" for reporting.
+   duplex - updated debug tracing command to use $HOME
+          added fake lp for debugging
+          renamed temp files to include script name
+          fixed bug in text file handling
+   dplx - fixed definition of test version of duplex
+   mprb - fixed fake print job number variable
+   dplx, duplex, mprb - added .duplexpr config file
+          Get default print strategy from .duplexpr config file
+   duplex, mpr, mprb - removed TMPFILE_PPC - unused for some time
+   duplex, kmprb_one, mpr, mprb - cleaned up temporary file processing
+          made sure temp file names include the script name
+   kmprb_one - added -rt option to reformat all one page plain text files
+          before printing all (already) formatted one page files (PostScript or PDF)
+   dprint - fixed file name quoting bugs
+   kmprb -  pass -rt flag to kmprb_one
+            fixed ancient bug which caused krmpq to offer to delete all files if none were printed
+   krmpq - changed message texts
+   cleaned up syntax in a number of files
+
+24 Sep 2015 - duplex.0.2.3.2
+   dprint - complete rewrite - now flags can be in any order
+          parameters passed from dprintm handled correctly
+          parameters passed to enscript from invocation command line or from dprintm handled correctly
+          refactored code to use array for passing arguments to enscript 
+          added -title option to dprint (works when passed from dprintm as well)
+            (useful when piping files into dprint)
+    dprintm - rewrote comments to reflect changes in dprint
+    pqnext - added xclip to put next file number in clipboard so it may be manually pasted
+          into a print to file dialog (will skip this if xclip is not installed)
+    kmprb - added option to specify files to print in the parameter list (for use when called by other scripts)
+           Turned queue review error test back on because it's not fixed for yad in Ubuntu 12.04 
+           Added readable test for mprb status file before trying to read it
+    kmprb, krmpq - removed --ontop from YOPT
+    dot.duplexpr - new configuration file
+    kmprb, krmpq, kmprb_one, pq_next, rmpq - *New configuration file* - source .duplexpr for print queue location
+           Eliminated DUPLEXPQ environment variable  
+    mprb - changed path to bash_trace (commented out in production)
+    README, duplex.txt, INSTALL - updated for new .duplexpr configuration file
+    kmprb_one - fixed file permissions
+    extras.txt - new text file with a couple of optional aliases to use with duplexpr
+           and an AutoKey macro for printing to the print queue from Firefox and Thunderbird 
+ 
+06 October 2014 - duplex.0.2.3.1
+    kmprb, krmpq, kmprb_one, mprb, pqnext, dplx, duplex - Added --no-markup to yad commands that display file names
+            Removed --ontop (it didn't help anything)
+    dprint - added -land to print in landscape
+            Fixed dprint documentation in duplex.txt, README
+            added test to prevent overwriting an existing file with the -o option
+    dplx, duplex, kmprb, kmprb_one, krmpq, mprb, pqnext - added --center to all yad invocations
+          Pop-ups getting lost behind other windows because of loss of focus finally corrected
+          (by enhancement/bug fix to yad 0.25.1)
+    mprb_rev - removed. This wasn't intended to be an official part of the project
+    INSTALL - Added step 5A to delete mprb_rev from the executables directory, if it exists
+    duplex, kmprb_one, mprb - added tests for lp_queue_id failure
+    kmprb_one - added display of number of jobs to be printed
+        Major overhaul to handle embedded blanks in file names
+        Now uses a temp file
+    kmprb, kmprb_one - added test for too many files in print queue to keep yad from screwing up
+        kmprb just skips the print queue preview, kmprb_one just reports the number of files to be printed
+    kmprb, kmprb_one, krmpq - added print queue name to dialogs
+
+28 April 2013 - duplex.0.2.3
+    kmprb_one - Added kmprb_one - print ALL one page jobs from print queue
+    kmprb - Added -1 option to call kmprb_one allowing the  user to print ALL 1 page jobs first
+            Added gui error message if mprb fails
+            Fixed bug that offered hidden files as choices
+            Improved buttons on dialogs
+            Added --on-top to all dialogs
+    mprb - Finally fixed printing of null jobs at one end of odd page count jobs (Didn't hurt anything, but wasted resources.)
+           Added "FF" to the end of print job numbers for jobs that are just form feeds to get first 
+           or last odd page ejected from printer
+           Added FAKE_PRINT_JOB_NUMBER for use with fake lp (not in package) for debuging without printing
+           Fixed lp error detection bug
+           Improved buttons on dialogs
+           Added --on-top to all dialogs
+    krmpq - Added test for empty print queue
+            Fixed bug that offered hidden files as choices
+            Improved buttons on dialogs
+            Added --on-top to all dialogs
+    pqnext - Made next job number selectable for copy and paste
+             Rewrote next file logic to ignore non-numeric file names in print queue
+             Improved buttons on dialogs
+             Added --on-top to all dialogs
+    mpr, duplex, mprb - Replaced pdf page counting logic using pdfinfo
+            Fixed bug so that print_file_type can handle symlinked print files
+    dplx, duplex - Improved buttons on dialogs
+          Added --on-top to all dialogs
+
+31 December 2012 - duplex.0.2.2.1
+    Fixed reported total number of jobs in mprb using the -pass2 option
+
+29 December 2012 - duplex.0.2.2
+    Replaced gui file selection dialogs with new yad code which restricts access to print queue only
+    Fixed (or, at least, improved) reported total number of jobs in mprb to account for rejected jobs
+    Modified kmprb (and krmpq, mprb) so that the file deletion dialog only offers the names
+      of files that were successfully printed
+    Modified krmpq - If arguments are passed to krmpq, then only those file names are offered
+      as choices for deletion (It used to just skip the gui and delete them.)
+
+22 November 2012 - duplex.0.2.1
+    Replaced zenity with yad for improved gui interface
+      (and lots more flexibility for future development)
+    Fixed a problem with one page jobs introduced in duplex.0.2
+    Minor bug fixes
+    Don't use krmpq with arguments.  For now, it doesn't work.  Eventually, it will (hopefully) allow you to delete
+      selected files from those specified as arguments (so you will only be offered the option to delete files
+      that you have just printed - not all of them)
+
+03 September 2012 - duplex.0.2
+    Process most pdf files directly
+    Correctly handle print files with .ps and .pdf extensions
+    (lp with options fails to print anything for some postscript print files created
+    by Adobe Reader)
+    Added second printer paper handling strategy and a parameter (-ps) to select it
+    (even pages reversed then odd pages normal - supports printers like HP Laserjet P1006 and 1020)
+    Removed kdplx (and dplx2, duplex2 used by it)
+    Added pqnext - lists next print queue file number/(name)
+    Added mprb_rev - process print queue in reverse order - last in, first out
+    Minor bug fixes to several scripts
+
+14 December 2011 - duplex.0.1.3
+    Small bug fixes in duplex, dplx, and mprb
+    Added kdplx gui version of dplx which uses two new files
+    dplx2 and duplex2.  These additional files are for use by kdplx only.  They are 
+    not designed for stand alone usage.
+    Rewrote and extended kmprb to handle the whole printing workflow: Review the print queue,
+    Select and Print, Select and Delete.
+    Renamed print and printm to dprint and dprintm to eliminate conflict
+    with a system print command
+    Included Test_File.ps - for duplex printing diagnostics
+    Improved page counting.  Works for files that don't explicitly include %%Pagess: nnn.
+    This was necesary for postscript files generated by the Opera browser.
+
+29 October 2010 - duplex.0.1.2.1 Improved the documentation
+
+28 October 2010 - duplex.0.1.2 actually gets released - at least locally.
+    Additional improvements/modernizations to the code
+    Some bug fixes for file names with embedded blanks and an extra final blank page
+    printing in a couple of situations
+    "Fixed" bug - duplex now honors pass one parameters for final odd pages.
+       Normally, this will be good, but if any optional user set parameter such as page range
+       excludes the printing of page 1, then final odd pages won't print and everything
+       will go south.  Needs more programming for a real solution.
+    Added kmprb - a gui for mprb
+    Added rmpq - to delete files from the print queue
+    Added krmpq - a gui for rmpq
+    These new additions are test versions only.  They work, but are hard coded with the
+    assumption that your files to print, your print queue is located in $HOME/pq.
+
+17 May 2005 - duplex.0.1.2 - New Features & Bug Fixes
+    Added user interrupt handling to duplex and mprb to clean up temporary files.
+
+    Added -I option to mprb to ask the user to go ahead and print the files after a dry run.
+    -i and -I are mutually exclusive.
+
+    Added -o option to print to allow output to a file instead of directly to the printer
+
+    Fixed mprb so that a temporary file used with the -i and -I options is now deleted
+
+    Fixed a bug in duplex which ejected a blank page anyway when the user aborted
+    printing pass 2.
+
+    Fixed a bug in mprb which caused pass2 (-pass2 option) printing to fail on files
+    with file names including embedded blanks.  Fixed similar problem in duplex.
+
+    Fixed print to handle additional enscript parameters correctly. Modified page headers.
+
+------------------------------------------------------------
+
+19 June 2004 - duplex.0.1.1 - Bug fix
+   Corrected a syntax error in the mprb script in code that
+   collected summary statistics when running Pass 2
+   only (-pass2 option). 
+------------------------------------------------------------
+
+13 June 2004 - duplex.0.1 - Initial release
+
+    ------
+    
+    I'm very pleased to have had so many downloads for such a small project.  I would greatly
+    appreciate *any* constructive feedback on the project.  Feedback may be by email or posted
+    to the General Discussion Forum for duplexpr on sourceforge.net.

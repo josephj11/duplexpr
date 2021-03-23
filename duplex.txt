@@ -1,0 +1,403 @@
+duplex 0.3.1.1 Duplex Printing Emulation System
+
+Documentation Last Modified: 08/13/2018
+
+This project is hosted at http://sourceforge.net/projects/duplexpr/
+
+duplex requires the following packages to be installed:
+  yad
+  cups-bsd
+  enscript
+  poppler-utils
+  ghostscript
+  
+Optional Package(s):
+  xclip - becomes required if you use dprintf
+  trash-cli - if you would like the option (controled by the delete_to_trash option) of deleting
+    selected print files to Trash instead of completely removing them with rm.
+  
+  These are available through ubuntu/debian repositories and probably elsewhere.
+
+  It is recommended (but completely optional) that xpp also be installed.  It is an invaluable tool
+  for recovering from paper jams and multi-page feeds where a substantial number (but not all) of
+  the pages from pass one are still intact and the user wishes to finish printing these pages without
+  starting from scratch. It is not called by any of the duplex scripts.
+
+Command Line Scripts
+  
+duplex: Print one file using two-sided printing
+  Usage:
+    duplex [-ps <print strategy number>] "<pass-one-lp-parameters>" "<pass-two-lp-parameters>" <print-file>|<->
+    
+      -ps <print strategy number> specifies which paper handling strategy to implement
+        1 - odd pages reversed then even pages normal
+        2 - even pages reversed then odd pages normal (default)
+        3 - odd pages normal then even pages normal (NEW)
+        (Print strategy 0 makes no sense for this script and is treated as an error.)
+
+      <pass-one-lp-parameters> are parameters passed to lp to control printing the first side of all
+        the pages
+
+      <pass-two-lp-parameters> are parameters passed to lp to control printing the second side of all
+        the pages
+
+      <print-file> is the path of the file to print.  If <-> is specified, standard input is used.
+
+      Returns:
+        0 - success
+        1 - print file error
+        9 - script/system error 
+
+      Note: lp parameters contain embedded whitespace and must be quoted as one string.
+
+dplx: Optional front end for duplex - Print one file using two-sided printing
+  Usage:
+    dplx [-ps <print strategy number>] [-opt "<lp-common-parameters>"] [<print-file>|<->]
+
+      -ps <print strategy number> specifies which paper handling strategy to implement
+        1 - odd pages reversed then even pages normal
+        2 - even pages reversed then odd pages normal (default)
+        3 - odd pages normal then even pages normal (NEW)
+        (Print strategy 0 makes no sense for this script and is treated as an error.)
+
+      -opt, if present, specifies that the following argument contains additional common lp parameters
+
+      <lp-common-parameters> are additional parameters to pass to lp for both printing passes
+
+      <print-file> is, optionally, the path of the file to print.  If <-> or no filename parameter is
+        specified, standard input is used.
+        
+      Returns:
+        0 - success
+        1 - print file error
+        9 - script/system error 
+
+      Note: lp parameters contain embedded whitespace and must be quoted as one string.  For convenience,
+      the pass-one and pass-two specific lp parameters are defined in the .duplexpr configuration file
+      and should be modified to reflect the needs of your printer.
+
+mprb: Print multiple files as a single batch.  Prints one side of all the sheets of all the files, then,
+      after the output is manually reinserted in the printer, the other sides of all the sheets are printed.
+  Usage:
+    mprb [-ps <print strategy number>] [-i | -I | -pass2] <printfile> ...
+      -ps <print strategy number>  specifies which paper handling strategy to implement
+        0 - all pages in order (non-duplex) in one pass
+        1 - odd pages reversed then even pages normal
+        2 - even pages reversed then odd pages normal (default)
+        3 - odd pages normal then even pages normal (NEW)
+
+      -i - just report number of pages per job and total then quit
+      -I - report number of pages per job and total then ask the user if they want to print them
+      -pass2 - just prints the pass 2 pages for all jobs - useful for recovering from paper jams, etc.
+
+GUI Scripts:
+
+  klprm - Display all jobs in the user's CUPS print queue and allows selected ones to be deleted.
+    klprm [job_id ...]
+    
+    If job_id ... is specified, only those jobs are offered for deletion.
+    If no arguments are specified, all user jobs are offered for deletion.
+    Use with care!
+    
+    Not called by any other scripts (yet). This is handy when a problem occurs after one of the other
+    scripts has submitted a number of print jobs to lp (CUPS) and you need to get rid of some or all of them.
+    
+    The job_id arguments are provided so that, in the future, a script can call klprm after an error
+    and only offer to delete the print jobs it has created.
+
+  kmprb is a GUI which does it all.
+  
+    kmprb [-ps num] [-1 [-rt]] [-b num | -B] [<file> ... ]
+        -ps num overrides default print strategy
+        -1 causes kmprb to call kmprb_one to allow printing of ALL one page jobs first to speed things up
+           kmprb_one ignores the files specified to kmprb, so it sees ALL one page jobs, not just those that might be
+           specified in kmprb's [<file> ... ]
+           (I'm calling this a "feature", not a bug ;)  )
+        -rt passes -rt to kmprb_one for reformatting text files
+        -b num causes the overall print job to be split into batches of no more than num sheets,
+           but will allow single files with more than num sheets to print as their own batches
+        -B same as -b, but asks the user for the maximum number of sheets per batch
+        <file> ... are files to offer to print - instead of all available files
+           (This option is intended primarily for use by other scripts calling kmprb.)
+        
+    It displays all the files in the print queue along with the number of pages and sheets each will generate.
+    Next, it allows you to select which files to print and prints them.
+    Finally, it allows you to select which files to delete of those which were successfully printed.
+    (Presumably, they are not needed any longer once they have been successfully printed.)
+    
+    When krmpq has been called from kmprb or kmprb_one, its final message - about successfully 
+    deleting files just printed or that no files were selected to be deleted no longer times out and it offers
+    a new Quit option which tells the script it was called from to quit. This gracefully stops
+    things after a part of printing (all one-page jobs or a sub-batch) has been successfully completed.
+    This should come in handy when there is an external world reason for quitting - like low toner/ink.
+    This is disabled if a calling script lets it know that there aren't any more files to process after this batch. 
+
+  kmprbatches - reports on how the print jobs will be split into batches of sheets when using kmprb.
+    kmprbatch [-g] [-b num] [-1] [file ...]
+      (flags may be in any order)
+      -g - GUI mode - all messages are displayed in dialog boxes (default is CLI text messages) 
+      -b num - Specify the batch size in sheets - if not specified, use the default batch size
+      -1 - Process ALL one page jobs in their own batch first like the kmprb -1 option does
+      file ... - If one or more print job file names are specified, then only those jobs are
+         considered for batching
+      
+      This is useful for anticipating widow or orphan batches so a more optimal batch size or queue
+       order can be selected.
+
+  kmprb_one - similar to kmprb, but only processes ALL one page jobs to speed things up.
+    kmprb_one [-rt]
+      If -rt is specified, then each one-page text file is reformatted and printed using dprint
+    Prints ALL or no 1 page jobs, no job selection is implemented
+    Also offers (via krmpq) the Quit option with the all/no files deleted dialog for telling a calling script (kmprb)
+    to quit.
+    
+  krmpq - GUI version of rmpq - allows the user to select which files to delete.
+    krmpq [<base file name> ...]
+      If arguments are specified, only those files are offered as choices for deletion.
+      Unlike rmpq, if no files are selected or entered on the command line, all print queue files are offered
+      as choices for deletion (but none are preselected).
+      
+  pqnext - GUI pop-up which returns the next available file name for the print queue.
+    pqnext [-q]
+      If xclip is installed, the next file name will automatically be copied to the clipboard
+      for manual pasting.
+      If -q (quiet) is specified, then the next file name is copied to the clipboard and nothing is displayed.
+      This is for use within other scripts. Using this option returns an error if xclip is not installed.
+      New: Handles any new file number name length that fits into a bash integer.
+
+Description:
+
+Duplexpr is a set of bash shell programs (bash) which emulate duplex printing (on both sides of the paper) for printers
+that do not support duplex printing in hardware. It is intended for use with printers which are (at
+least temporarily) dedicated to a workstation.
+
+Starting with version 0.3, it can also be used as a print queue manager (without duplex printing emulation) for printers 
+(e.g. for those which support duplex printing in hardware.)
+
+A companion shell script, dplx has been provided which invokes the duplex script with parameters set up for the current default printer.
+It was written to be easy to adapt to other printers.
+
+When invoked, the duplex script prints the single file to be printed in two passes.  The first pass prints one side of
+each sheet and the second pass prints the other side of each sheet.  To facilitate this, as soon as the first
+pass is finished printing, it prompts the user to wait for the first pass to complete printing.  Then, the user must remove the
+sheets, rotate them appropriately (180 degrees, horizontally for a Deskjet or Laserjet), and reinsert them in the input
+paper tray and type y, Y, 1, or just Press Enter to print the second pass.
+
+To enable page counting logic, plain text files are converted to postscript (in a temporary file) using
+enscript.
+
+The dplx script currently defaults to calling the duplex script such that the even numbered pages are printed in reverse and then the
+odd pages are printed forward. This may be modified by setting the default_print_strategy in the .duplexpr
+configuration file.
+
+After the first pass is sent to the printer, the
+user may type anything other than y/Y/1/Enter to eliminate printing the second pass.
+
+For older versions of CUPS/lp:
+If the total number of pages to be printed is odd, an additional print job consisting of just a formfeed
+may be printed at the end of pass 2 to eject the last sheet of the first pass for page handling strategy 1.
+For page handling strategy 2, the blank page may be printed at the start of pass 1.
+
+If the first page of a subsequent print job prints on the other side of the last sheet of the previous job
+in the same batch, try setting default_formfeed=1 in .duplxpr to enable this feature.
+
+Because the dplx script accepts standard input, it may be used wherever lp would be used such as in application printer
+configurations (e.g. browsers, word processors, etc.).
+(If anyone actually gets this to work with Firefox or Thunderbird, please let me know!)
+
+Please submit any configurations that work directly to me or to the general discussion forum of the duplexpr project on sourceforge.
+
+Examples:
+  dplx myfile
+    prints myfile in duplex
+  dplx -ps 1 myfile
+    prints myfile in duplex using page handling strategy 1
+  cat myfile | dplx
+    prints myfile in duplex
+  dplx -opt "-o page-ranges=1-4,7,9-12" myfile
+    prints selected pages from myfile in duplex
+  kmprb -1 -B
+    Offers to print all one page jobs then allows the user to select which remaining jobs to print.
+    It also asks the user for the maximum number of sheets to print at one time and
+    then splits the printing into sub-batchs of at most that many sheets.
+    Single jobs which exceed the batch size are printed as their own sub-batch.
+  kmprbatches -g -b 20 -1
+    Runs the batch report in GUI mode with a batch size of 20 sheets, and all the one page jobs in their own batch.
+
+Installation:
+  All the GUI scripts require the yad package which requires X, GTK.
+  Additionally, the scripts use the lp printer interface which is available through the cups-bsd package.
+  The pdf handling uses pdfinfo from poppler-utils.
+  
+  Once these packages have been installed, just put the scripts in a directory in your path such as ~/bin and make sure they
+  are executable.  Conversion of text files to postscript is performed by the enscript package.
+  PDF and PostScript files are handled natively.
+  
+  It hasn't been tested extensively yet, but if you can get one script to run, it should be able to find any other scripts
+  it needs to call by looking for them in the same directory it was run from. This is needed when scripts are launched
+  from a desktop or panel icon on KDE5 which doesn't have $HOME/bin or other user-added paths in its PATH.
+  
+  Configuration File: .duplexpr
+  
+  The configuration file, dot.duplexpr must also be copied (and renamed) to $HOME/.duplexpr
+  duplex 0.3.1 has a new configuration file version which must be installed and customized for proper operation.
+  If you are upgrading from 0.3.1, you do not need to install this file again (unless you would like to use the
+  new delete_to_trash configuration option)
+  
+  It currently contains:
+    path to the print queue ($HOME/pq)
+    default print strategy (if -ps is not specified to the scripts which support it) (strategy 2)
+    default print batch size in sheets (used with the -B option) (16 sheets per batch)
+    directory where any temporary files will be created (/tmp)
+    option for whether formfeeds are issued for unmatched odd numbered pages (0 - no)
+      It appears that newer versions of CUPS may do this by default,
+      but if you get the first page of a subsequent job on the the other side of the last page of the current job
+      when printing the even numbered pages, try setting this to 1.
+    option to delete files to Trash instead of completely deleting them (0 - no)
+    
+    Additional new fields have been added, but are not available to users yet.
+    
+    NOTE: If you plan on using the (new) delete to Trash option, please verify that it works using unimportant print
+      files. If the scripts cannot find trash-put (the program which deletes to Trash), they will silently
+      revert to permanent deletion using rm.
+      (As of KDE/QT 5.6, Deleting to Trash using trash-put works, but does not change the (optional) Trash widget in
+      the taskbar from empty to full.)
+  
+  NOTE: Please read Exploring_Print_Strategies.pdf and How_To_Request_A_New_Print_Strategy.pdf.
+  Hopefully, they'll answer a lot of your questions and tell you what I need to know to fix print strategy problems.
+  
+  After installation, the file, Test_File.pdf should be printed using dplx.  This four page (two sheet) document
+  will show you clearly whether duplex printing is working on your system.
+  
+  A detailed description of how this file printed along with the value of the -ps parameter and the contents of
+  .duplexpr should be included in any bug reports related to printed output page issues.
+  
+  A photo of the test output (stacked exactly the way it came out of the printer) 
+  with the corners turned over to show some of the printing on the other sides is invaluable.
+  
+  If the default does not work, try adding -ps 1 and then -ps 3 as the first parameter and see if that fixes it for 
+  your printer.  If it does, you can modify the default value in the .duplexpr configuration file.
+  
+  If jobs with an odd number of pages mess up the page order of subsequent jobs by printing the first page of a 
+  subequent print job on the other side of the last page or the previous print job in a batch,
+  try setting default_formfeed=1 in .duplexpr.
+  
+  Use
+    cd <location-where-duplex-is-installed> ## such as cd ~/installs/duplex_0_3_1_1
+    mprb Test_File_Odd.pdf Test_File.pdf
+    
+  to test printing batches with odd page count jobs in them. Follow the instructions immediately above for reporting
+  errors.
+
+  *Please* see the file, How_To_Request_A_New_Print_Strategy.pdf for more details on documenting print strategy issues.
+  
+  If these utilities will be used with OpenOffice.org or libreoffice,
+    the OOo "Tools->Options->Text Document->Print->Create Single Print Jobs" box must be checked
+    (selected) when printing multiple copies of a document.  If this is not selected, pages will not
+    print in the desired order.  (See also, Bugs section below.)
+
+Additional Utility Scripts:
+  Several additional scripts are included in the package.
+  mpr - Prints multiple files using dplx.  Reports the number of pages to be printed.
+      Prompts the user to remove each completed print job from the printer.
+      Returns:
+        0 - success
+        1 - print file error
+        9 - script/system error 
+
+  mpr [-i] file ...
+      -i just report number of pages per job and the total then quit
+  dprint - Prints one file with wordwrap, headers, and a (proportional) font using dplx.
+    dprint [-o <outfile>] [-font <font-name>] [-points <font-size>] [-land] [-title <job-title>] [<enscript-parameters>] [<file> | -]
+      -o <outfile> - writes the output to <outfile> instead of sending it to the printer
+        Will not overwrite an existing file
+      -font <font-name> - specifies the font to use for the text.  Default is Times-Roman.
+      -points <font-size> - specifies the font size in points for the text. Default 12
+      -land - print in landscape instead of portrait
+      -title - title for page header - must be quoted if it contains blanks or other special characters
+      It is also possible to pass additional parameters to enscript.  E.g.
+        dprint -s 15 <file> will doublespace the printout.
+      Flags can be in any order, but <file> must be the last parameter, if specified.
+      If <file> is - or unspecified, standard input is used.
+  dprintf - Prints one file (using dprint) directly to the print queue automatically using the next
+      available print file name/number
+    dprintf [<dprint options>] [<enscript options>] file
+  dprintm - Prints one file using dprint with a preset (monospaced) font (useful for
+        structured text.)
+    dprintm [<dprint options>] [<enscript options>] file
+  rmpq - deletes files from the print queue (defaults to $HOME/pq, but can be changed in the $HOME/.duplexpr configuration file.)
+  rmpq [file] ...
+    If [file] ... is specified, then those files are deleted.
+    If no [file] is specified, ALL files are deleted from the print queue.
+      
+Limitations:
+  This family of scripts splits one conceptual print job into two separate asynchronous jobs.  This will
+  only work gracefully with an idle printer, one print job at a time (a print job may consist of several
+  print files in one job using kmprb, mprb, or mpr), although the user may process other
+  print jobs between passes if the user has not yet reinserted the output pages for the second pass.
+  Page counting logic has been tested on PostScript 3.0, text, and PDF files.
+  
+  Scripts do simple argument processing.  Options *must* be in the order specified and prior to the list of
+  files to print. (Except for dprint, dprintm, dprintf, and kmprbatches which have been improved.)
+  These scripts are designed to handle printing tasks using the default printer and options.  Some
+  flexibility is available with -opt, but nowhere near what xpp can do (for one side of one job at a time).
+
+  When using page handling strategy 1, duplex assumes that those options which are specified for pass one printing
+  (including any options set using the -opt option) will allow page 1 (the first odd page) to print in pass 1.
+  This is necessary to print the final odd page of each odd page count print job.  Specifying things like 
+  page ranges that don't include page 1 or trying to print even pages in pass one may not work.
+  (It will probably work if the first odd page prints in pass one - not tested.) There are similar issues for
+  the other paper handling strategies.
+  
+  Only the dplx/duplex scripts currently support the -opt option to specify additional printer parameters
+  on the command line.
+
+Bugs:
+  yad dialogs using the --tail option ignore the Enter key. As a workaround, these dialogs have been changed
+  to mention pressing Ctrl+Enter instead - which works.
+
+  Page counting logic looks directly at the original (or created) postscript file or the pdf file.  If the user specifies
+  multi-up printing, page ranges (using -opt), or multiple copies, the page count and, possibly, the
+  even/odd pages calculation will be wrong.  Don't do this if you're printing out more than one job
+  at a time because (using page handling strategy 1) the last odd page may become the first page of the next job or an extra blank page
+  may be printed at the end of a job.  Similar problems will occur with the other page handling strategies.
+  It should work if all your physical page counts are even.
+
+  (Old) Using Print To File (in PostScript format) in Adobe Reader with many PDF files
+  (instead of sending them directly to the printer) seems to produce
+  files that lp can't cope with.  This is way beyond the scope of this project!  I never found anyone in CUPS, etc.
+  to look at this. Since (Linux) support for Adobe Reader was discontinued a few years ago, just don't use it.
+  
+  NOTE: (Old) If you have upgraded from a previous version of yad to 0.33.1 (GTK+ 2.24.10), you may see some dialog boxes
+  (the ones which time out) which display as tiny boxes with no text in them. To fix this:
+  Delete the yad config file which lives at
+  $XDG_CONFIG_HOME/yad.conf
+  and/or
+  $HOME/.config/yad.conf
+
+To do:
+  Handle multiple printers and queues gracefully.  This does work, but duplex scripts print to the 
+  default printer unless one is explicitly set with -opt "-d printqueue" arguments to dplx.
+  
+  This release has a number of internal enhancements which should increase the system's flexibility in this regard.
+  They're still internal at this point, so they won't have a lot of effect on end users.
+  I plan to add some parameters to access them in a subsequent release.
+  
+  Add a feature to pass one to delete (lprm) all pending pass one jobs from the CUPS print queue upon user abort.
+    (making sure that only these jobs are deleted in case some pending print jobs have been added by other means.)
+    The klprm script is the first step in this direction.
+    
+  (Maybe) Add a parameter to call kmprbatches from kmprb. 
+    
+  Test on other distros and configurations.
+ 
+Acknowledgements:
+  Thanks to lp (CUPS), yad, and all the other projects whose programs were used for doing all the hard work and to
+  Till Kamppeter for Xpp which showed me it could be done at all.  Many thanks to the members of WNYLUG and WNCLUG and the members
+  of several Linux related forums on stackexchange for their invaluable assistance.
+  
+  "I stand on the toes of giants."
+  (If you knew how many questions I've asked .... <G>)
+  
+
+Joseph J. Pollock - JPmicrosystems - josephj at main dot nc dot us

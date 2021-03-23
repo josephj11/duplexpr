@@ -1,0 +1,250 @@
+Installation - Last modified 08/13/2018
+
+NOTE: New config file as of 0.3.1. Be sure to install and customize it as necessary if you are upgrading
+  from a version prior to 0.3.1 - (mandatory).
+
+NOTE: Please read
+  Exploring_Print_Strategies.pdf
+    and
+  How_To_Request_A_New_Print_Strategy.pdf
+  
+Hopefully, they'll answer a lot of your questions and tell you what I need to know to fix print strategy problems.
+  
+NOTE: (Old) See note below about a yad issue if you see tiny dialog boxes with almost no text in them.
+
+This takes a small bit of work at the command line and using a text editor once or twice.
+If someone knows how to write a proper install script for make install, it would be greatly appreciated.
+
+0) This package depends on a few other packages which must be installed for it to work.
+Install cups-bsd - provides the lp command.
+Install yad   - provides the GUI interface (needed by all the GUI scripts).
+Install enscript - translates text files to postscript so they can be processed the same way.
+Install poppler-utils - The pdf handling uses pdfinfo from poppler-utils.
+Install ghostscript (probably already installed - needed by the dprint print to file option)
+
+Optional:
+Install xclip - copies text to clipboard
+  pqnext will use this, if installed, to copy the next print queue file number to the clipboard
+  so you can manually paste it into a print to file dialog.
+  The new -q option for pqnext fails if xclip is not installed. The new, optional dprintf script also requires xclip.
+Install trash-cli - If installed, this will allow the delete_to_trash option to work if enabled - so that print files
+  are deleted to Trash instead of being completely removed with rm which is the default.
+
+For Ubuntu:
+To get the latest version of yad, add the ppa for y-ppa-manager (where yad lives - and y-ppa-manager is cool too,
+  but you don't need to install it.)
+sudo add-apt-repository ppa:webupd8team/y-ppa-manager
+sudo apt-get update
+
+sudo apt-get install cups-bsd yad enscript poppler-utils ghostscript
+(on Debian based distros)
+
+Optional:
+sudo apt-get install xclip trash-cli
+
+For other distros, do the equivalent with the appropriate package manager.
+
+1) Select an appropriate working directory (folder) to unpack the package including its documentation files.
+Something like an installs directory under your user's home directory would be good.
+If you don't have a suitable directory, create one.
+
+For the following, we'll assume it's in $HOME/installs  (where $HOME is an automatic shell variable
+that contains /home/<your-user-home-directory>).
+
+2) Move the package's tarball (the file that you just downloaded) into $HOME/installs
+
+3) Open a terminal window such as xterm or konsole.
+Type the commands in the steps below in that terminal window.
+The actual commands are indented to distinguish them from the surrounding text.
+You don't need the leading spaces when you type (or cut and paste) them (but if you leave them in, it won't
+hurt anything.)
+
+4) Unpack it:
+
+    cd $HOME/installs
+    tar -xvzf duplex_0_3_1_1.tar.gz
+    cd duplex_0_3_1_1
+
+This will create a subdirectory under $HOME/installs called duplex_0_3_1_1 with the unpacked project files
+in it and make that the current directory.
+
+4) Find the correct directory to put the project program files in.
+
+    echo $PATH
+
+That will show you where and in what order your system looks for programs to execute.
+If you already have your own user bin directory, you'll see
+/home/<your-user-home-directory>/bin
+in the path - probably at the end.
+
+If not:
+
+    mkdir $HOME/bin
+
+will create one for you.  If you're using kubuntu or another distro based on Debian, this directory will
+get automatically added to your path the next time you login.
+
+If it doesn't, then, using a text editor like nano, gedit, or kate, edit $HOME/.profile and add the following lines
+near the beginning
+
+    # set PATH so it includes user's private bin if it exists
+    if [ -d ~/bin ] ; then
+        PATH="${PATH}:~/bin"
+    fi
+
+If you want any commands you add to your user bin directory to take precedence over any that already
+exist in your system, then use this instead. (This may be more convenient, but it is a lot less secure.)
+
+    # set PATH so it includes user's private bin if it exists
+    if [ -d ~/bin ] ; then
+        PATH="~/bin:${PATH}"
+    fi
+
+This code should be placed right after the code that runs .bashrc.  On my system it looks line this:
+# if running bash
+if [ -n "$BASH_VERSION" ]; then
+    # include .bashrc if it exists
+    if [ -f ~/.bashrc ]; then
+  . ~/.bashrc
+    fi
+fi
+
+(PUT THE CODE FROM ABOVE HERE)
+
+5) Copy all the files except README, INSTALL, and those with the .txt, .pdf, or .ps extensions into a directory that's in your path.
+
+    cd $HOME/installs/duplex_0_3_1_1
+    cp dplx duplex klprm kmprb kmprb_one kmprbatches krmpq mpr mprb dprint dprintf dprintm rmpq pqnext $HOME/bin
+
+5A) Copy the configuration file into your home directory.
+    cp dot.duplexpr $HOME/.duplexpr
+    
+    NOTE: You may skip this step if you are upgrading from 0.3.1.
+      But the (new) delete to Trash option needs to be added if you intend to use it.
+    
+    NOTE: If you are upgrading from a previous version of duplexpr, then you may want to first save a copy of your
+    current .duplexpr file for reference while setting up the new file.
+    
+    If you want to place your print queue in a folder other than $HOME/pq, then
+    edit this file and change the value of pq to the full path of the folder you want to use.
+    
+    Please refer to the file duplex.txt under the heading
+
+    Configuration File: .duplexpr
+    
+    for more information on configuring duplexpr to your needs.
+    
+6) Several of the scripts use enscript to convert text files to postscript.
+    For this to work correctly, add or edit the following to the file .enscriptrc in your user's home directory using
+    a text editor like nano, gedit, or kate.
+    If this file does not exist, create it.
+
+    # Defaults for enscript (used by duplexpr package)
+    Spooler: <path>/dplx
+
+where "<path>" is the full path of the directory where you installed dplx.
+For example, if you installed dplx in /home/joe/bin then it would be:
+Spooler: /home/joe/bin/dplx
+
+You may also need to set the default paper type as in:
+DefaultMedia: Letter
+
+By default, the duplex system prints to you default printer.
+If the printer you want to use is not already the default printer, then the following
+commands (entered at a terminal) will make it the default.
+
+First, run lpstat to see the names of your printers.
+
+  lpstat -a
+  
+The names (needed for the commands below) are in the first column of the output.
+Select the printer to use and run the following commands substituting the actual printer name
+for "the name of the printer you selected".
+
+  printer="the name of the printer you selected"
+  sudo cupsenable "$printer"  ## Enable the printer
+  sudo cupsaccept "$printer"  ## Tell it to accept jobs
+  lpoptions -d "$printer"     ## Set it as the default printer
+
+That's it.  If you just created your personal bin directory and didn't manually add it to your path,
+then you'll need to logout and log back in before the system will automatically find the new commands.
+(Optionally, you can run cd ~;source .bashrc to get the changes to take effect now - but only in the current shell session.)
+
+7) The GUI scripts assume that files to be printed will be stored in a predefined folder.
+By default, this is the folder "pq" in your user's home directory ($HOME/pq).
+
+You can change this by editing the configuration file, $HOME/.duplexpr and changing the value of pq to the full path
+of an alternate location. If this directory does not already exist, you must manually create it (mkdir <path>).
+You must have write access to this directory (which you will have by default if you create it under your user's home directory.)
+
+After installation, the file, Test_File.pdf should be printed using dplx. This four page (two sheet) document
+will show you clearly whether duplex printing is working on your system.
+A detailed description of how this file printed along with the value of the -ps parameter should be included in any bug reports
+related to printed output page issues. You should also include a copy of your .duplexpr file.
+
+If the default does not work, try adding -ps 1 as the first parameter and see if that fixes it for 
+your printer.  If it does, you can modify the default value in the configuration file, .duplexpr.
+
+You can also try -ps 3
+
+See the Printer_Settings.txt file for information on printers which have been tested.
+
+NOTE: Please read
+  Exploring_Print_Strategies.pdf
+    and
+  How_To_Request_A_New_Print_Strategy.pdf
+  
+Hopefully, they'll answer a lot of your questions and tell you what I need to know to fix print strategy problems.
+  
+If jobs with an odd number of pages mess up the page order of subsequent jobs by printing the first page
+of the next print job on the other side of the last page of the current print job,
+try setting default_formfeed=1 in .duplexpr.
+
+Use
+  cd <location-where-duplex-is installed> ## such as cd ~/installs/duplex_0_3_1_1
+  mprb Test_File_Odd.pdf Test_File.pdf
+  
+to test printing batches with odd page count jobs in them. Follow the instructions immediately above for reporting
+errors.
+
+See the file, How_To_Request_A_New_Print_Strategy.pdf for more details on documenting print strategy issues.
+
+See duplex.txt for settings you may need to adjust in .duplexpr.
+
+Starting with duplex 0.3.1, print strategy parameters have been moved to .duplexpr. You can edit them to make them work
+for your printer using one of the existing print strategies as a starting point. Or, you can contact me for assistance.
+
+Test_File.pdf should be used while adjusting the pass one and pass two printing parameters in .duplexpr to be compatible
+with your printer.
+
+NOTE: dplx and duplex use different printing logic than that used by mprb/kmprb, so it is necessary to test these separately.
+
+Please submit the successful settings for your printer along with the brand and model (and any other relevant details)
+- either directly to me or to the general discussion forum of the duplexpr project at sourceforge.
+
+See the extras.txt file for some other things you can use to enhance duplexpr.
+
+NOTE: (old) If you have upgraded from a previous version of yad to 0.33.1 (GTK+ 2.24.10), you may see some dialog boxes
+(the ones which time out) which display as tiny boxes with no text in them. To fix this:
+Delete the yad config file which lives at
+$XDG_CONFIG_HOME/yad.conf
+and/or
+$HOME/.config/yad.conf
+
+NEW:
+
+If you have long print file names and a slightly old (16.04) version of QT (5.5), then you may see messages
+like this if you run one of the GUI scripts from a terminal and try to horizontally scroll one of the dialogs.
+This is fixed in QT 5.6.
+
+(yad:6887): Gtk-WARNING **: Error loading image 'file:///usr/share/themes/Breeze/gtk-3.0/assets/scrollbar-slider-overlay-horizontal.png': Error opening file: No such file or directory
+
+(yad:7749): Gtk-WARNING **: Error loading image 'file:///usr/share/themes/Breeze/gtk-3.0/assets/scrollbar-slider-overlay-horizontal.png': Error opening file: No such file or directory
+
+They are just warnings because somebody named a theme file incorrectly.
+This kludge "fixes" it (and also makes the horizontal scrollbar visible):
+
+cd /usr/share/themes/Breeze/gtk-3.0/assets
+sudo ln -s scrollbar-slider-horizontal-overlay.png scrollbar-slider-overlay-horizontal.png
+
+You may have to adjust the path or asset name, etc. if you are using a different theme on your desktop.

@@ -1,0 +1,67 @@
+#!/bin/bash
+## rmpq - clear out print queue files
+## Copyleft 07/24/2015 JPmicrosystems GPL
+##	 Last Modified 07/30/2018
+## If no arguments, clear all
+
+## Disallows arguments with paths so that only
+## files in the print queue can be deleted
+
+## Ignores files that don't exist or otherwise
+## can't be deleted (permissions, etc.)
+
+function delete () {
+  local dtt="${delete_to_trash:-0}" ## 0 if undefined or null
+  hash trash-put &> /dev/null  ## see if trash-put is installed
+  (( $? )) && dtt=0 ## if not, disable this option
+
+ if (( dtt ))
+  then
+    trash-put "$@" &> /dev/null
+  else
+    rm -f "$@"
+  fi
+}
+
+script_name=$(basename $0)  ## path stripped name of this script
+config="${HOME}/.duplexpr"
+
+e="" ## Actually delete files
+##e="echo " ## debug - just say we did - DRYRUN
+
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  echo "${script_name} - Can't read config file ${config}"
+  exit 1
+fi
+
+source "${config}"
+if (( $? ))
+then
+  echo "${script_name}: Bad config file ${config}"
+  exit 1
+fi
+
+cd "${pq}"
+if (( $? ))
+then
+  echo "${script_name}: Can't access Print Queue [$pq]"
+  exit 1
+fi
+
+if (( ! $# ))
+then
+  ${e} delete "${pq}"/*
+else
+  echo $* | grep -q '/'
+  if (( ! $? ))
+  then
+    echo "${script_name}: No paths allowed in file names"
+    exit 1
+  else
+    ${e} delete "$@"
+  fi
+fi
+
+exit 0

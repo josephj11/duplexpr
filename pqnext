@@ -1,0 +1,113 @@
+#!/bin/bash
+## pqnext
+## Copyleft JPmicrosystems 07/24/2015
+# ## Last Modified 07/22/2018
+## Get next print job number
+## Usage is: pqnext [-q]
+## If -q (quiet) is specified, nothing is displayed.
+## The result is just copied to the clipboard
+## If xclip is not installed, specifying -q is an error
+##
+## This version gets the last (largest) file number
+## and uses its length in digits to determine the length it should return
+## with left-zero padding
+## Strips off .ps and .pdf extensions, if present, before finding the current largest file number
+## If the next file number overflows the length of the previous one (99 -> 100)
+## It will return the longer file number. This works, but messses up the print queue file order
+## If the largest file number doesn't have the same number of digits as all the rest, then
+## The next one returned by pqnext won't either - which also messes up the print queue file order
+## 
+## If the print queue is empty, pqnext will return a 2-digit file name of 01
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+##source $HOME/bin/bash_trace ## debug - TRACE
+
+script_name="pqnext"
+mypath  ## Get the path to this script
+script_path="${my_path}"  ## make sure we can find other scripts
+yopt="--title ${script_name} --center --on-top"  # yad common options
+##dsptime_short=5  ## yad timeout for normal messages
+dsptime_long=10  ## yad timeout for exception messages
+dsptime_error=30 ## yad timeout for error messages
+
+gui=1 ## pop-ups enabled
+if [[ "$1" == "-q" ]]
+then
+  gui=0 ## pop-ups disabled (for use when called by other scripts)
+  shift
+fi
+
+config="${HOME}/.duplexpr"
+
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0 --text="Missing config file ${config}" \
+  --width=220 --timeout="${dsptime_error}"
+  exit 1
+fi
+
+source "${config}"
+if (( $? ))
+then
+  (( gui )) && yad ${yopt} --info --button=gtk-ok:0 --text="Bad config file .duplexpr" --width=220 --timeout="${dsptime_error}"
+  exit 1
+fi
+
+cd "${pq}"
+if (( $? ))
+then
+  (( gui )) && yad ${yopt} --info --button=gtk-ok:0 --text="Can't access Print Queue [$pq]" --width=220 --timeout="${dsptime_error}"
+  exit 1
+fi
+
+## Get all the numeric-only file names (including those with extensions of ".ps" or ".pdf"
+## strip off the leading "./" returned by find
+## sort numerically and just keep the last (largest) one
+next="$(find . -name '*' -regex '^\.\/[0-9]+\(\.pdf\|\.ps\|\.PS\|\.PDF\)?$' | sed -re 's/^\.\///' | sort -n | tail -1)"
+next="${next%%.*}"  ## strip off extension if present
+
+## Handle empty print queue (with no numeric file names in it)
+[[ ! $next ]] && next="00"  ## The number of zeroes determines the length of the new file number returned by pqnext
+
+## Set the length in digits to use to the same as the length of the file number we just found
+digits="${#next}"
+## Get rid of leading zeroes so we can increment it as a decimal integer
+## If we don't, a leading zero tells bash to use octal
+next=$(sed -re 's/^0*([0-9]+)/\1/' <<< ${next})
+
+(( next++ ))  ## Increment to get next file number
+
+## No statistics if print queue is empty (if the next number is 1)
+if [[ ${next} > 1 ]]
+then
+  stats="\n\n$(cd ${pq}; "${script_path}/mprb" -i * | tail -3)"
+else
+  stats=""
+fi
+
+## Put the leading zero back on if needed
+next="$(printf "%0${digits}d" ${next})"
+
+## If xclip is installed, then
+## put the file number into the clipboard so it can be manually pasted into a file name dialog
+hash xclip 2>/dev/null
+rc=$?
+(( rc )) && (( ! gui )) && exit 1  ## quiet mode is useless without xclip
+(( ! rc )) && echo -n ${next} | xclip -se c
+
+text="Queue [${pq}]\n\nNext Print File Is ${next}${stats}"
+
+(( gui )) && yad ${yopt} --text="${text}" --fixed --width=220 --height=120 \
+--button=gtk-ok:0 --timeout="${dsptime_long}"
+
+exit 0

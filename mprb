@@ -1,0 +1,1054 @@
+#!/bin/bash
+#####################################################
+## mprb                                            ##
+##                                                 ##
+## Print multiple files in duplex - batch mode     ##
+## to a reserved printer                           ##
+## Calling sequence:                               ##
+## mprb [-ps <print strategy number> ] [-i | -I |  ##
+##      -pass2] <print-files>                      ##
+##                                                 ##
+## -ps - print strategy                            ##
+##       0 - Print in one non-duplex pass          ##
+##       1 - Print odd pages reverse order first   ##
+##       2 - Print even pages reverse order first  ##
+##       3 - Print odd pages normal order first    ##
+##                                                 ##
+## -i - list files to be printed and page counts   ##
+##      then exit                                  ##
+##                                                 ##
+## -I - Same as -i, and ask user if they want to   ##
+##      print the jobs and do it                   ##
+##                                                 ##
+## -pass2 - Skip pass 1 and just print the         ##
+##          reverse pages                          ##
+##          May be useful for resuming printing    ##
+##          after a paper jam or misfeed.          ##
+##          Just put the remaining good pass one   ##
+##          jobs back in the printer in tray       ##
+##          and start mprb with the completed      ##
+##          and dammaged jobs removed from the     ##
+##          argument list                          ##
+##                                                 ##
+##          This option is invalid for print       ##
+##          strategy 0 - which only has one pass   ##
+##                                                 ##
+## Copyright (c) 24 Jul 2015  Joseph J. Pollock    ##
+##   JPmicrosystems - josephj at main.nc.us        ##
+##   Last Modified 06/11/2018                      ##
+##                                                 ##
+## This program is free software; you can          ##
+## redistribute it and/or modify it under the      ##
+## terms of the GNU General Public License as      ##
+## published by the Free Software Foundation;      ##
+## either version 2 of the License, or             ##
+## (at your option) any later version.             ##
+##                                                 ##
+## This program is distributed in the hope         ##
+## that it will be useful, but WITHOUT ANY         ##
+## WARRANTY; without even the implied warranty     ##
+## of MERCHANTABILITY or FITNESS FOR A             ##
+## PARTICULAR PURPOSE. See the GNU General         ##
+## Public License for more details.                ##
+##                                                 ##
+## You should have received a copy of the          ##
+## GNU General Public License along with this      ##
+## program; if not, write to                       ##
+##    the Free Software Foundation, Inc.           ##
+##    59 Temple Place - Suite 330                  ##
+##    Boston, MA  02111-1307, USA                  ##
+#####################################################
+
+#####################################################
+## Uses enscript to convert text files to PostScript
+## for page counting purposes
+##  depends on yad, cups-bsd, poppler
+#####################################################
+
+#### debug
+##fake lp for testing w/o a printer 
+
+##source ${HOME}/pgm/bash_functions/lp ## debug - DRYRUN
+
+function quit () {
+  ## clean up loose ends and exit
+  ##
+  
+  rm -f ${tmpfile}
+  ##echo "Quit DUPLEX_GUI [${DUPLEX_GUI}] rc [{${rc}}] mprb_status [${mprb_status}]" ## debug
+  ##read -p "Quitting mprb" ## debug
+  if (( DUPLEX_GUI ))  ## if called from a script, return status in a file
+  then
+    echo "${rc}" > "${mprb_status}"
+  fi
+  
+  exit $rc
+}
+
+function user_abort () {
+  ## clean up loose ends from user abort
+  ##
+  echo
+  echo "  Aborted by User"
+  echo
+  rc=2
+  quit
+}
+
+function non_numeric () {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [[ -z "${1}" ]] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [[ -z "${var}" ]]
+  return $?
+}
+
+function get_print_file_type () {
+  ## What type of printable? file is $1
+  ## Return 0 on success
+  ##        1 on failure
+  ## Return print_file_type
+  ##          0 if file does not exist
+  ##               or can't be read
+  ##          1 if file is PostScript
+  ##          2 if file is text
+  ##          3 if file is PDF
+  ##          255 if other
+
+  local str
+
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    print_file_type=0
+    return 1
+  fi
+
+  str=$(file -Lb "${1}")
+  ## echo "str=["${str}"]"  ## debug
+  case "${str}" in
+    *"PostScript"*"text"*)
+      print_file_type=1
+      return 0
+      ;;
+    
+    *"text"*)
+      print_file_type=2
+      return 0
+      ;;
+    
+    *"PDF"*)
+      print_file_type=3
+      return 0
+      ;;
+    
+    *)
+      print_file_type=255
+      return 1
+      ;;
+  esac
+}
+
+function page_count () {
+  unset page_ct
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    return 1
+  fi
+
+  get_print_file_type "${1}"
+  case "${print_file_type}" in
+    1)  ## PostScript
+      ps_page_ct "${1}"
+      return $?
+      ;;
+    
+    3)  ## PDF
+      pdf_page_ct "${1}"
+      return $?
+      ;;
+    
+    *)  ## Anything else fails 
+      return 1
+      ;;
+  esac
+  
+}
+
+function pdf_page_ct () {
+  local magic page_ct0 rc
+
+  if [[ ! -r "${1}" ]]
+  then
+    return 1 
+  fi
+
+  magic="$(head -1 "${1}" | cut -d '-' -f 1)"
+  if [[ $magic != "%PDF" ]]
+  then
+    return 1 
+  fi
+
+  page_ct0=$(pdfinfo "${1}" 2>/dev/null | grep 'Pages:' | awk '{print $2}')
+  rc=$?
+  (( rc )) && return ${rc}
+  if (( page_ct0 ))
+  then
+    page_ct=${page_ct0}
+    return 0
+  fi
+
+  return 1
+}
+
+function ps_page_ct () {
+  ## extract page count from postscript file
+  ## Return   0 on success
+  ##          1 on failure
+  ##        Number of pages in page_ct (unset if not found)
+  ## This is totally seat of the pants - no guarantees
+  ## First, try to find it at the tail of the file.
+  ## If that fails, try at the head
+  ## If that fails, count the nummber of showpage commands and cross your fingers
+  ## This method is not guaranteed to work because one showpage could be in a function
+  ## called repeatedly, etc.
+
+  local args line page_ct0
+
+  ##echo starting page count  ## debug
+  unset page_ct page_ct0  ## Clear the return result in case an error occurs
+
+  line=$(tail -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr  ## debug
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if (( page_ct0 ))
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## If at first you don't succeed, try, try again 
+  line=$(head -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if (( page_ct0 ))
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## The third time is the charm
+  page_ct0="$(grep -c 'showpage' "${1}" 2>/dev/null)"
+  ##page_ct0="$(grep -c 'HiResBoundingBox' "${1}" 2>/dev/null)"
+  if (( ! $? )) && (( page_ct0 ))
+  then
+    page_ct="${page_ct0}"
+    return 0
+  fi
+
+  return 1
+}
+
+function lp_queue_id () {
+  # lp_queue_id - extract print queue number
+  #       from message issued by lp
+  #       returns 0 if successful, 1 if failed
+  #       queue number is returned in lpq_id as a string queue-jobnumber
+  local usage
+  usage="Usage is ${FUNCNAME} {lp-print-message}"
+
+  ##echo "lpq received [$*]" > /dev/stderr ##debug
+  if [[ -z "${4}" ]]  # The 4th word returned by lp
+  then            # should be printer-q_id
+    echo "${usage}" > /dev/stderr   # if it's null, then foobar
+    unset lpq_id  # echo a usage message
+    return 1      # and return an error
+  fi
+
+  ##echo "lpq_id [${4}]" > /dev/stderr  ## debug
+  lpq_id=${4} # extract q_id
+
+  return 0
+}
+
+function job_in_print_queue () {
+  ## Return 0 if print queue contains job number $1
+  ## query the print queue using lpstat
+  ## pipe the outout into grep to find just the line containing the job number
+  ## $1.  Use command substitution (``) and quoting to get that line into a string
+  ## which is then tested for non-empty (-n).  If the print job exists, we'll get
+  ## the line and the string will be non-empty.  Otherwise, the string will be empty
+  ## Can deal with multiple print queues if $1 contains Queuename-jobnumber
+
+  ##echo "[$(lpstat | grep "$1")]" > /dev/stderr  ## debug
+  if [[ -n "$(lpstat | grep "${1}")" ]]
+  then
+    return 0
+  fi
+
+  return 1
+}
+
+function wait_until_printjob_done () {
+  ## Wait print job to finish
+  ## Uses the job_in_print_queue function (defined above) to see if job number $1
+  ## is still in the print queue. If it is, wait and look again until
+  ## it's not found (presumably, finished spooling to printer)
+
+  while job_in_print_queue ${1}
+  do
+    ##echo found it > /dev/stderr  ## debug
+    sleep 2  ## adjust for the speed of your printing process
+  done
+
+  ##echo it\'s gone > /dev/stderr  ## debug
+  return 0
+
+}
+
+function ynq () {
+# Yes/No Question
+# Usage: ynq <prompt>
+# set C style return code
+# Returns 1 for yes and 0 for no - for use with (( ))
+# Enter, by itself, means Yes
+
+  local prompt="$*"
+  local reply
+
+  read -n 1 -p "$prompt" reply
+  [[ -n ${reply} ]] && echo ## Just got one character, so add an EOL
+  case "$reply" in
+    [yY1] | "" )
+      return 1
+    ;;
+    *     )
+      return 0
+    ;;
+  esac
+}
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+## Set current print strategy
+function duplex_set_ps () {
+  local strategy="${1:-"${default_print_strategy}"}"  ## Print strategy defaults to the default print strategy
+
+  ## Print strategy must be between 0 and max - 1
+  if (( strategy < 0 )) || (( strategy >= duplex_max_ps ))
+  then
+    return 1   ## Undefined strategy
+  fi
+  
+  current_print_strategy="${strategy}"
+
+  ## default batch size for use with the -B option
+  ## Tied to print strategy, not queue
+  default_batch_size=duplex_batch_size["${current_print_strategy}"]}
+
+  ## Default Pass One printing parameters
+  pass1="${pass1_parameters["${current_print_strategy}"]}"
+
+  ## Default Pass Two printing parameters
+  pass2="${pass2_parameters["${current_print_strategy}"]}"
+  
+  return 0
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+debug_out="/dev/stderr"  ## debug - so debug output always has somewhere to go
+##debug_out="$HOME/temp/debug_output_mprb.txt"  ## debug
+##exec 5> "$debug_out"   ##  debug
+##BASH_XTRACEFD="5"           ##  debug       Calling from desktop
+##source ${HOME}/bin/bash_trace  ## debug - TRACE
+
+trap 'user_abort' 2  ## Call user_abort() if user presses ctrl-c
+script_error=9
+script_name=$(basename ${0})  ## path stripped name of this script
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+usage="Usage: ${script_name} [-ps <print-strategy-number> ] [-i | -I | -pass2] <print-files>"
+
+## yad parameters
+yopt="--center --on-top --title ${script_name}"  # yad common options
+##dsptime_short=5   ## yad timeout normal messages
+dsptime_long=30   ## yad timeout exception messages
+##dsptime_error=60  ## yad timeout error messages
+yyes="OK"
+yno="Cancel"
+
+config="${HOME}/.duplexpr"
+
+## enscript parameters
+## In moderate point sizes (12+), the header font may need to be proportional
+## To show the whole header
+## A non-proportional font for the body works best for structured text
+body_font="Luxi-Mono"  ## font for enscript for non-postscript files
+header_font="Times-Roman"  ## font for enscript for non-postscript files
+font_size=14  ## point size for enscript
+margins="50:50:50:50" ## 100ths of inch top, bottom, left, right for enscript
+
+## Access the duplexpr configuration file
+if [[ ! -r  "${config}" ]]
+then
+  echo "${script_name}: Missing config file ${config}"
+  rc=1
+  quit
+fi
+
+source "${config}"
+if (( $? ))
+then
+  echo "${script_name}: Bad config file ${config}"
+  rc=1
+  quit
+fi
+
+total_pages=0  ## total (both sides) pages being printed
+total_sheets=0     ## total sheets per pass (including blanks)
+run=1  ## If true (1), then actually print jobs
+askrun=0  ##  Ask user to do real run after dry run if true (1)
+mprb_status="${tp}/mprb_status" ## fixed name temp file to return exit status (when called by a script)
+files_printed="${tp}/mprb_files_printed" ## fixed name temp file to return list of files printed
+< /dev/null > "${files_printed}"    ## empty to start with
+if (( $? ))
+then
+  echo "${script_name}: Can't write temporary file [${files_printed}]"
+  rc=1
+  quit
+fi
+
+print_strategy="${current_print_strategy}"
+if (( $# ))
+then
+  if [[ "${1}" == "-ps" ]]
+  then
+    shift
+    if (( $# ))
+    then
+      duplex_set_ps "${1}"
+      if (( $? ))
+      then
+        echo "Invalid print strategy number"
+        echo "${usage}"
+        exit "${script_error}"
+      else
+        print_strategy="${current_print_strategy}"
+        shift
+      fi
+    fi
+  fi
+fi
+
+pass1_par="${pass1}"
+pass2_par="${pass2}"
+
+## Need to know if pass 1 is reverse order for each print strategy
+case "${print_strategy}" in
+  # Print non-duplex, but still manage print queue
+  0 | 3)
+    reverse_order_pass1=0 ## Don't print pass one jobs in reverse order
+  ;;
+  # Print pass one pages first in reverse order
+  ## NOTE: I think 3 needs to go with 0, not here
+  1 | 2)
+    reverse_order_pass1=1 ## Print pass one jobs in reverse order
+  ;;
+  #
+  *)
+  echo
+  echo "  Undefined Print Strategy - [${print_strategy}]"
+  echo "  ${usage}"
+  echo
+  rc=1
+  quit
+  ;;
+esac
+
+if (( $# ))
+then
+  if [[ "${1}" == "-i" ]] || [[ "${1}" == "-I" ]] ## do a dry run with page counts
+  then
+    run=0 ## just display pages to be printed and quit
+
+    if [[ "${1}" == "-I" ]]  ## Ask user to do real run after dry run
+    then
+      askrun=1
+    fi
+
+    shift
+    if (( $# )) && [[ "${1}" == "-pass2" ]] ## -pass2 n/a for dry run
+    then
+      if (( print_strategy == 0 ))
+      then
+        echo
+        echo "  -pass2 - there is no second pass with print strategy 0"
+        echo
+        rc=1
+        quit
+      fi
+      shift
+    fi
+
+  fi
+fi
+
+if (( $# )) && [[ "${1}" == "-pass2" ]] ## Print only Pass two
+then
+  pass1=0  ## Turn off Pass 1
+  shift
+  reinsert=1      ## Enable Pass 2
+  args2=("$@")    ## file list for Pass 2
+  jobs=0          ## File count for Pass 2
+  ##echo "Args2 for pass 2 ["${args2[@]}"]" > /dev/stderr ##debug
+else
+  pass1=1  ## Turn on Pass 1
+  case "${print_strategy}" in
+    #
+    0 | 1 | 2 | 3)
+      reinsert=0      ## Disable Pass 2 until a job prints more than one page
+    ;;
+    *)
+      echo
+      echo "  Undefined Print Strategy - [${print_strategy}]"
+      echo "  Programmer malfunction - please report bug"
+      echo
+      rc=1
+      quit
+    ;;
+  esac
+
+fi
+
+## If no arguments, or just "*" then exit
+str="$*"
+if [[ "${str}" == '*' ]] || [[  -z "${str}" ]]
+then
+  echo "Nothing to print"
+  rc=0
+  quit
+fi
+
+## Create temp file for enscript output
+tmpfile=$(/bin/mktemp -q ${tp}/${script_name}.XXXXXX)  # create temp file
+if (( $? ))    # if create tempfile failed
+then
+  echo "Can't create temp file"
+  echo -e "Check permissions for ${tp}\n\nAborting..."
+  rc=1
+  quit
+fi
+
+## echo "Temp file is ["${tmpfile}"]" > /dev/stderr
+## Process argument list in reverse for Pass 1 so first job
+## comes out on top at end of Pass 2
+
+args=("$@")
+jobs=0  ## Count of files printed
+goodjobs=$#
+cnt=0  ## file count for dry run and for print strategies with normal ordered pass 1 
+ 
+for (( n = $# - 1 ; n >= 0 ; n-- ))
+do
+  if (( ! pass1 )) ## Skip Pass 1
+  then             ## Without having to put the whole thing
+    break          ## in another if statement
+  fi
+
+  if (( run )) && (( reverse_order_pass1 )) ## actual printing run
+  then                                      ## and pass 1 has to be printed in reverse order
+    file="${args[n]}"  ## reverse order for proper printing
+  else
+    file="${args[cnt]}"  ## normal order
+    (( cnt++ ))
+  fi
+  
+  ##echo "file is ["${file}"]" > /dev/stderr
+  fn="${file}"  ## save file name for messages
+  if [[ ! -e "${file}" ]]
+  then
+    echo "Skipping ["${file}"] - not found"
+    (( goodjobs-- ))
+    continue
+  fi
+
+  if [[ ! -s "${file}" ]]
+  then
+    echo "Skipping ["${file}"] - empty"
+    (( goodjobs-- ))
+    continue
+  fi
+
+  if [[ -d "${file}" ]]
+  then
+    echo "Skipping ["${file}"] - directory"
+    (( goodjobs-- ))
+    continue
+  fi
+  
+  get_print_file_type "${file}"
+  if (( $? ))     ## Something we can't handle
+  then            ## then bypass it
+    echo "Skipping ["${file}"] - Can't process this file"
+    (( goodjobs-- ))
+    continue
+  fi
+
+  if [[ "${print_file_type}" == 2 ]] ## If it's text
+  then                               ## Convert it to postscript
+    enscript -B -Z --silent --word-wrap --margins=$margins -f${body_font}@${font_size} -F${header_font}@${font_size} -o ${tmpfile} "${file}"
+    file=${tmpfile}
+  fi
+
+  page_count "${file}"   ## Get Number of pages to print
+  if (( $? ))
+  then
+    ##echo "#### Debug page_ct = [${page_ct}]"  ## debug
+    echo "page_count() failed"
+    echo "Skipping ["${fn}"]"
+    (( goodjobs-- ))
+    continue
+  fi
+
+  ## Print pass 1
+  (( jobs++ ))
+  (( total_pages += $page_ct ))
+  (( sheets = page_ct / 2 ))
+  (( page_ct % 2 )) && (( sheets++ ))  ## add one for last odd page
+  (( total_sheets += sheets ))
+
+  (( n1 = jobs ))
+  if (( run )) && (( reverse_order_pass1 ))
+  then  ## number reverse for real printing
+    (( n1 = n + 1 ))  ## user doesn't want to see "job 0"
+  fi
+
+  ##echo "Printing ${n1} of ${goodjobs} - [${fn}] - $page_ct pages ${sheets} sheets"
+  printf "Printing %2d of %2d - [%s] - %2d pages %2d sheets\n" "${n1}" "${goodjobs}" "${fn}" "$page_ct" "${sheets}"
+  if (( ! run ))  ## dry run
+  then
+    continue
+  fi
+
+  case "${print_strategy}" in
+    0)
+      (( ++fake_print_job_number ))  ## used for testing with fake lp
+      ## watch for lp doing something with a null 1st parameter
+      myjob=$(lp ${pass1_par} "${file}")    ## print pass 1 and capture lp message
+      rc=$?
+      if (( rc )) # if lp failed
+      then
+        echo "lp failed to print ["${fn}"]"
+        echo "${script_name}: Aborting"
+        quit
+      fi
+
+      echo ${myjob}  ## Let user see job number
+    ;;
+    1 | 3)
+      (( ++fake_print_job_number ))  ## used for testing with fake lp
+      myjob=$(lp ${pass1_par} "${file}")    ## print pass 1 and capture lp message
+      rc=$?
+      if (( rc )) # if lp failed
+      then
+        echo "lp failed to print ["${fn}"]"
+        echo "${script_name}: Aborting pass one"
+        quit
+      fi
+
+      echo ${myjob}  ## Let user see job number
+      
+      if (( page_ct > 1 ))       ## Only need pass 2 if at least one job
+      then                     ## printed more than one page
+        reinsert=1
+      fi
+    ;;
+    2)
+      ## Prepend a blank page to the pass one output
+      ## to print the last odd page on it in pass 2
+      ## Apparently the geniuses who "fixed" the default formfeed problem
+      ## for jobs with an odd number of pages didn't do it for 1-page jobs
+      
+      if (( default_formfeed )) && (( page_ct % 2 )) || (( page_ct == 1 ))
+      then
+        (( ++fake_print_job_number ))  ## used for testing with fake lp
+        myjob=$(echo -n $'\f' | lp)
+        rc=$?
+        if (( rc )) # if lp failed
+        then
+          echo "lp failed to print [${fn}] with error [${rc}]"
+          echo "${script_name}: Aborting pass one"
+          quit
+        fi
+        echo "${myjob} FF" ## Let user see job number
+      fi
+
+      ## If page count == 1 then we already printed the even page above
+      if (( page_ct > 1 ))
+      then
+        (( ++fake_print_job_number ))  ## used for testing with fake lp
+        myjob=$(lp ${pass1_par} "${file}")    ## print pass 1 and capture lp message
+        rc=$?
+        if (( rc )) # if lp failed
+        then
+          echo "lp failed to print [${fn}] with error [${rc}]"
+          echo "${script_name}: Aborting pass one"
+          quit
+        fi
+        echo ${myjob}  ## Let user see job number
+      fi
+
+      reinsert=1
+      ##source "/home/bigbird/bin/bash_trace_off"  ##debug
+    ;;
+    #
+    *)
+      echo
+      echo "  Undefined Print Strategy - [${print_strategy}]"
+      echo "  Programmer malfunction - please report bug"
+      echo
+      rc=1
+      quit
+    ;;
+  esac
+
+  ##echo "jobs [${jobs}] fn [${fn}]"  ##debug
+  args2[jobs-1]="${fn}" ## Save only the job names that actually
+                        ## printed to pass to Pass 2
+  ##echo "args2[jobs-1] [${args2[jobs-1]}]" ##debug
+done
+
+if (( total_pages ))
+then
+  echo
+  echo "Printing "${jobs}" jobs with "${total_pages}" pages"
+  echo "    "${total_sheets}" Sheets per pass"
+  echo
+fi
+
+if (( ! run )) && (( total_pages )) ## if dry run, print summary and exit
+then
+  rm -f "${tmpfile}"
+  if (( askrun )) ## If -I - ask user to print
+  then
+    if (( DUPLEX_GUI ))
+    then
+      yad ${yopt} --question --button=gtk-yes:1 --button=gtk-no:0 --text="Go ahead and print these jobs?"
+      rc=$?
+    else
+      ynq "Go ahead and print these jobs (y/Y/Enter)? "
+      rc=$?
+    fi
+    if (( rc ))  ## User selected Yes
+    then
+      ## note: this works, but would eliminate any future flags from getting passed to the new mprb
+      "$script_path/${0##*/}" -ps "${print_strategy}" "${args[@]}"  ## Recursively run the script without the "-I"
+      rc=$?
+      quit
+    fi
+  fi
+
+  rc=0
+  quit
+fi
+
+## All pass 1 jobs sent to printer
+## wait for the last one to finish
+## Assumes fifo print queue
+
+if (( pass1 )) ## Finish Pass 1 post processing
+then
+  if (( reinsert ))         ## Don't bother with all this
+  then                    ## unless more than one page to print
+    lp_queue_id ${myjob}  ## Get id of last job sent to printer
+    if (( $? ))  ## Internal Error - Failed to get print queue id
+    then
+      echo "Internal Error - Failed to get print queue id"
+      echo "  Programmer malfunction - please report bug"
+      rc=1
+      quit
+    fi
+
+    wait_until_printjob_done ${lpq_id}  ## Wait for it to be gone
+
+    if (( DUPLEX_GUI ))
+    then
+      ## rc - reversed to match ynq return codes
+      yad ${yopt} --button=gtk-ok:1 --button=gtk-cancel:0 --text="Printing Pass One - Please Wait\n\n
+      When finished, either\n\n
+      Rotate and reinsert the pages\n
+      Then, Select ${yyes} to Print the other sides\n\n
+      or\n\n
+      Select ${yno} to Abort"
+      rc=$?
+    else
+      echo -ne "Printing Pass One - Please Wait
+
+      When finished, rotate and reinsert the pages and press y/Y/Enter to print the other sides"
+      ynq
+      rc=$?
+    fi
+    if (( ! rc )) ## User selected No
+    then
+      if (( DUPLEX_GUI ))
+      then
+        yad ${yopt} --button=gtk-ok:1 --width=220 \
+        --text="User Cancelled Pass Two" --timeout="${dsptime_long}"
+      else
+        echo "User Cancelled Pass Two"
+      fi
+      ## use rc=2 to indicate a user abort
+      rc=2
+      quit
+    fi
+    
+    ##echo "print_strategy [$print_strategy]"  ## debug
+
+    case "${print_strategy}" in
+      1 | 2)
+        ##echo "Args2 from pass 1 ["${args2[@]}"]" > /dev/stderr ##debug
+        (( k = jobs - 1 ))                 ## Reverse the list of printed files so
+        for (( j = 0 ; j < k ; j++ ))      ## Pass 2 gets them in the same order
+        do
+          ##echo " J K :" ${j} ${k} > /dev/stderr  ##debug
+          ##echo "Before Sj Sk ["${args2[${j}]}"] ["${args2[${k}]}"]" > /dev/stderr  ##debug
+          str="${args2[${j}]}"            ## Whether or not Pass 1 runs
+          args2[${j}]="${args2[${k}]}"
+          args2[${k}]="${str}"
+          ##echo "After Sj Sk ["${args2[${j}]}"] ["${args2[${k}]}"]" > /dev/stderr  ##debug
+          (( k-- ))
+        done
+        ##echo "Args2 for pass 2 ["${args2[@]}"]" > /dev/stderr  ##debug
+      ;;
+      3) : ## Skip this for Print Strategy 3
+      ;;
+      *)
+        echo
+        echo "  Undefined Print Strategy - [${print_strategy}]"
+        echo "  Programmer malfunction - please report bug"
+        echo
+        rc=1
+        quit
+      ;;
+    esac
+      
+  fi ## of reinsert
+fi ## of pass 1
+
+## Starting Pass Two
+
+if (( reinsert )) ## If there is anything to print on the reverse sides
+then
+  n1=0  ## job counter for Pass 2
+  jobs=${#args2[*]}
+  for file in "${args2[@]}"
+  do
+    ##echo "Pass2 printing ["$file"]" > /dev/stderr  ##debug
+    ##continue  ## debug
+    fn="${file}"  ## save file name for messages
+    if [[ ! -e "${file}" ]]
+    then
+      echo "ERROR ["${file}"] - not found on pass 2"
+      echo "${script_name}: Aborting Pass Two"
+      rc=1
+      quit
+    fi
+
+    if [[ ! -s "${file}" ]]
+    then
+      echo "ERROR ["${file}"] - empty on pass 2"
+      echo "${script_name}: Aborting Pass Two"
+      rc=1
+      quit
+    fi
+
+    if [[ -d "${file}" ]]
+    then
+      echo "ERROR ["${file}"] - directory on pass 2"
+      echo "${script_name}: Aborting Pass Two"
+      rc=1
+      quit
+    fi
+
+    get_print_file_type "${file}"
+    if (( $? ))     ## Something we can't handle
+    then            ## then bypass it
+      echo "ERROR ["${file}"] - Can't process this file type on pass 2"
+      echo "${script_name}: Aborting Pass Two"
+      rc=1
+      quit
+    fi
+
+    if (( print_file_type == 2 ))     ## If it's text
+    then                              ## Convert it to postscript
+      enscript -B -Z --silent --word-wrap --margins=$margins -f${body_font}@${font_size} -F${header_font}@${font_size} -o ${tmpfile} "${file}"
+      file=${tmpfile}
+    fi
+
+    page_count "${file}"   ## Get Number of pages to print
+    if (( $? ))
+    then
+      echo "ps_page_ct() failed for [${fn}] on pass 2"
+      echo "${script_name}: Aborting Pass Two"
+      rc=1
+      quit
+    fi
+
+    ## Print pass 2
+    (( n1++ ))
+    (( sheets = page_ct / 2 ))
+    (( page_ct % 2 )) && (( sheets++ ))
+    ##echo "Printing ${n1} of ${jobs} - [${fn}] - $page_ct pages ${sheets} sheets"
+    printf "Printing %2d of %2d - [%s] - %2d pages %2d sheets\n" "${n1}" "${jobs}" "${fn}" "$page_ct" "${sheets}"
+
+    case "${print_strategy}" in
+      ## print_strategy 0 should never get here 
+      1 | 3)
+        ## if page count == 1 then there aren't any real even pages to print
+        ## the one odd page will be ejected below
+        if (( page_ct > 1 ))
+        then
+          (( ++fake_print_job_number ))  ## used for testing with fake lp
+          myjob=$(lp ${pass2_par} "${file}")    # print pass 2 and capture lp message
+          rc=$?
+          if (( rc )) # if lp failed
+          then
+            echo "lp failed to print [${fn}] with error [${rc}]"
+            echo "${script_name}: Aborting Pass Two"
+            quit
+          fi
+          echo ${myjob}  ## Let user see job number
+        fi
+        
+        ## Get the last odd page, if any, out of the printer
+        ## by sending a formfeed to printer
+        if (( default_formfeed )) && (( page_ct % 2 )) || (( page_ct == 1 ))
+        then
+          (( ++fake_print_job_number ))  ## used for testing with fake lp
+          myjob=$(echo -n $'\f' | lp)
+          rc=$?
+          if (( rc )) # if lp failed
+          then
+            echo "lp failed to print [${fn}] with error [${rc}]"
+            echo "${script_name}: Aborting Pass Two"
+            quit
+          fi
+          echo "${myjob} FF"  ## Let user see job number
+        fi
+      ;;
+      2)
+        ## Printing the even pages first, there's always at least one odd page to print
+        ## That was handled in pass one by first printing a blank even page for jobs with
+        ## an odd page count
+        (( ++fake_print_job_number ))  ## used for testing with fake lp
+        myjob=$(lp ${pass2_par} "${file}")    # print pass 2 and capture lp message
+        rc=$?
+        if (( rc )) # if lp failed
+        then
+          echo "lp failed to print [${fn}] with error [${rc}]"
+          echo "${script_name}: Aborting Pass Two"
+          quit
+        fi
+
+        echo ${myjob}  ## Let user see job number
+      ;;
+     #
+      *)
+        echo
+        echo "  Undefined Print Strategy for Pass 2 - [${print_strategy}]"
+        echo "  Programmer malfunction - please report bug"
+        echo
+        rc=1
+        quit
+      ;;
+    esac
+
+    ## Collect summary info if Pass 1 didn't happen
+    if (( ! pass1 ))
+    then
+      (( total_pages += page_ct ))
+      (( sheets = page_ct /2 ))
+      (( page_ct % 2 )) && (( sheets++ ))  ## add 1 for the last odd page
+      (( total_sheets += sheets ))
+    fi
+
+    ## In this pass, print one job at a time
+    ## So user has a fighting chance to recover
+    ## From a paper jam if one occurs
+    
+    lp_queue_id ${myjob}  ## Get last job's id
+    if (( $? ))  ## Internal Error - Failed to get print queue id
+    then
+      echo "Failed to get print queue id"
+      rc=1
+      quit
+    fi
+
+    wait_until_printjob_done ${lpq_id}  ## wait until it's done
+
+  done
+
+fi
+
+rm -f ${tmpfile}
+
+if (( total_pages ))
+then
+  echo
+  echo "Printed ${jobs} jobs with ${total_pages} pages"
+  echo "    ${total_sheets} Sheets printed"
+  echo
+fi
+
+if (( jobs ))
+then
+  if (( DUPLEX_GUI ))
+  then
+    yad ${yopt} --info --button=gtk-ok:0 --text="Printing last job - Please Wait\n\n
+    When finished,\n\n
+    Remove the printout from the printer" --timeout="${dsptime_long}" --height 180 --width 250 --fixed
+  else
+    echo "Printing last job - Please Wait
+    
+    When finished, remove the printout from the printer "
+  fi
+else
+  rc=0
+  quit
+fi
+
+## If this script was called by another one (kmprb)
+## then return a list of the files actually printed
+## in a fixed name temporary file
+if (( DUPLEX_GUI ))
+then
+  ##echo "Files Printed [${args2[@]}]"  ## debug
+  for (( i = 0 ; i < ${#args2[@]} ; i++ ))
+  do
+    choices="${choices}\"${args2[i]}\" "
+  done
+  ##echo "choices [${choices}]"  ## debug
+  echo "${choices}" > "${files_printed}"
+    
+  ##cat "${files_printed}"  ## debug
+fi
+
+rc=0
+quit

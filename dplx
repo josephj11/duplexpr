@@ -1,0 +1,187 @@
+#!/bin/bash
+#####################################################
+## dplx                                            ##
+## Emulates duplex printing of one print file for  ##
+## printers which don't suport it in hardware      ##
+##                                                 ##
+## dplx is a front end for the duplex script       ##
+##                                                 ##
+## Calling sequence:                               ##
+##  dplx [-ps <print strategy number>] [-opt       ##
+##      "<lp common parameter list>"]              ##
+##       [<print-file>|<->]                        ##
+##                                                 ##
+## Copyright (c) 12/15/2013 Joseph J. Pollock      ##
+##   JPmicrosystems - josephj at main.nc.us        ##
+##   Last Modified 02/25/2018                      ##
+##                                                 ##
+## This program is free software; you can          ##
+## redistribute it and/or modify it under the      ##
+## terms of the GNU General Public License as      ##
+## published by the Free Software Foundation;      ##
+## either version 2 of the License, or             ##
+## (at your option) any later version.             ##
+##                                                 ##
+## This program is distributed in the hope         ##
+## that it will be useful, but WITHOUT ANY         ##
+## WARRANTY; without even the implied warranty     ##
+## of MERCHANTABILITY or FITNESS FOR A             ##
+## PARTICULAR PURPOSE. See the GNU General         ##
+## Public License for more details.                ##
+##                                                 ##
+## You should have received a copy of the          ##
+## GNU General Public License along with this      ##
+## program; if not, write to                       ##
+##    the Free Software Foundation, Inc.           ##
+##    59 Temple Place - Suite 330                  ##
+##    Boston, MA  02111-1307, USA                  ##
+## See: http://www.gnu.org/copyleft/gpl.html       ##
+#####################################################
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+## Set current print strategy
+function duplex_set_ps () {
+  local strategy="${1:-"${default_print_strategy}"}"  ## Print strategy defaults to the default print strategy
+
+  ## Print strategy must be between 0 and max - 1
+  if (( strategy < 0 )) || (( strategy >= duplex_max_ps ))
+  then
+    return 1   ## Undefined strategy
+  fi
+  
+  current_print_strategy="${strategy}"
+
+  ## default batch size for use with the -B option
+  ## Tied to print strategy, not queue
+  default_batch_size=duplex_batch_size["${current_print_strategy}"]}
+
+  ## Default Pass One printing parameters
+  pass1="${pass1_parameters["${current_print_strategy}"]}"
+
+  ## Default Pass Two printing parameters
+  pass2="${pass2_parameters["${current_print_strategy}"]}"
+  
+  return 0
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+##source "${HOME}/bin/bash_trace" ## debug - TRACE
+
+script_error=9
+script_name=$(basename $0) # path stripped name of this script
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+if (( $? ))    # having an identity crisis
+then
+  echo "Can't find path to scripts"
+  exit "${script_error}"
+fi
+
+usage="${script_name} [-ps <n>] [-opt \"{lp common parameter list}\"] [{print-file}|{-}]"
+
+if [[ "${1}" == "--help" ]]  # if first argument is --help
+then                      # then echo a usage message
+  echo "${script_name}: usage is ${usage}"  # and exit
+  exit "${script_error}"
+fi
+
+e=""            # Null string so duplex is called
+## e="echo "     #For debugging - disable call to duplex
+duplex="${script_path}/duplex" # Production version
+config="${HOME}/.duplexpr"
+
+## Access the duplexpr configuration file
+if [[ ! -r  $config ]] ## debug
+then
+  echo "Missing config file ${config}"
+  exit "${script_error}"
+fi
+
+source "${config}"
+if (( $? ))
+then
+  echo "Bad config file ${config}"
+  exit "${script_error}"
+fi
+
+print_strategy="${current_print_strategy}"
+if (( $# ))
+then
+  if [[ "${1}" == "-ps" ]]
+  then
+    shift
+    if (( $# ))
+    then
+      duplex_set_ps "${1}"
+      if (( $? ))
+      then
+        echo "Invalid print strategy number"
+        echo "${usage}"
+        exit "${script_error}"
+      else
+        print_strategy="${current_print_strategy}"
+        shift
+      fi
+    else
+      echo "-ps requires a print strategy number"
+      echo "${usage}"
+      exit "${script_error}"    
+    fi
+  fi
+fi
+
+if (( print_strategy == 0 ))
+then
+  # Non-duplex mode - incompatible with dplx/duplex
+  echo
+  echo "  ${script_name} is incompatible with print strategy 0"
+  echo "  Either specify another strategy with the -ps parameter"
+  echo "  or change the default print strategy in the configuration file"
+  echo "  ${usage}"
+  echo
+  exit "${script_error}"
+fi
+
+if [[ "${1}" == "-opt" ]]  # check for optional common parameters flag
+then
+  shift
+
+  if [[ -z "${1}" ]]  # if flag was found, then parameters 
+  then             # are mandatory
+    echo -e "Usage is\n${usage}\n\n Aborting..."
+    exit "${script_error}"
+  else  # common parameters found
+    pass1="${1} ${pass1}"
+    pass2="${1} ${pass2}"
+    ##echo "pass1 [${pass1}]" > /dev/stderr  # debug
+    ##echo "pass2 [${pass2}]" > /dev/stderr  # debug
+    shift
+  fi
+fi
+
+if [[ -z "${1}" ]] || [[ "${1}" = "-" ]]  # If no file argument, 
+then                              #  use "-" for stdin
+  f="-"
+else            # otherwise, use file argument
+  f="${1}"
+  if [[ ! -e "${f}" ]]  # if the file does not exist
+  then
+    echo -e "[${f}] Not found\n\n Aborting..." 
+    exit 1
+  fi
+fi
+
+# if e is null, call duplex
+# otherwise e="echo" - echo the calling sequence for debugging
+##echo ${duplex} -ps "${print_strategy}" "${pass1}" "${pass2}" "${f}" > /dev/stderr  # debug
+${e} ${duplex} -ps "${print_strategy}" "${pass1}" "${pass2}" "${f}"
+
+exit $?  # return the status returned by duplex

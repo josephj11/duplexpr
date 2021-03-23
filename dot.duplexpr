@@ -1,0 +1,73 @@
+## duplexpr configuration file
+## Last Modified 07/29/2018
+## This file needs to be named .duplexpr and saved in $HOME
+
+## Default Print Strategy - uncomment only one
+## If you leave the commented ones in, it makes it relatively easy
+## to write a (sed) script to modify the default if you switch on the fly to a printer
+## which uses a different strategy
+##default_print_strategy=0 ## No duplex printing, just manage the print queue
+##default_print_strategy=1 ## Emulate duplex printing, odd pages reversed then even pages normal
+default_print_strategy=2 ## Emulate duplex printing, even pages reversed then odd pages normal
+##default_print_strategy=3 ## Emulate duplex printing, odd pages normal then even pages normal
+
+current_print_strategy="${default_print_strategy}"
+
+## There is only one actual print queue by default
+default_print_queue=0
+current_print_queue="${default_print_queue}"
+
+## Print Queues
+duplex_queue[0]="$HOME/pq"
+duplex_queue[1]="$HOME/pq"
+duplex_queue[2]="$HOME/pq"
+duplex_queue[3]="$HOME/pq"
+
+duplex_max_queue=${#duplex_queue[*]} ## Valid print queue number is 0 .. duplex_max_queue - 1
+
+## Location of print queue
+pq="${duplex_queue["${current_print_queue}"]}"
+
+## Default batch sizes per queue
+duplex_batch_size[0]=16
+duplex_batch_size[1]=16
+duplex_batch_size[2]=16
+duplex_batch_size[3]=16
+
+## default batch size for use with the -B option
+default_batch_size="${duplex_batch_size["${current_print_queue}"]}"
+
+## put your lp options for printing each side in each print strategy here
+
+## Pass One printing parameters per print strategy
+pass1_parameters[0]=""  ## do not delete - needed for setting duplex_max_ps
+pass1_parameters[1]="-o page-set=odd -o outputorder=reverse"
+pass1_parameters[2]="-o page-set=even -o outputorder=reverse"
+pass1_parameters[3]="-o page-set=odd -o outputorder=normal"
+
+duplex_max_ps=${#pass1_parameters[*]} ## Valid print strategy number is 0 .. duplex_max_ps - 1
+
+## Default Pass One printing parameters
+pass1="${pass1_parameters["${current_print_strategy}"]}"
+
+## Pass Two printing parameters per print strategy
+pass2_parameters[0]=""  ## save
+pass2_parameters[1]="-o page-set=even -o outputorder=normal"
+pass2_parameters[2]="-o page-set=odd -o outputorder=normal"
+pass2_parameters[3]="-o page-set=even -o outputorder=normal"
+
+## Default Pass Two printing parameters
+pass2="${pass2_parameters["${current_print_strategy}"]}"
+
+## Directory for temporary files
+tp="/tmp"
+
+## default formfeed behavior
+## This is probably a CUPS thing, so there's only one correct value
+##default_formfeed=1  ## Turn on formfeeds for unmatched odd pages
+## Still have to generate formfeeds for one-page jobs - god bless CUPS
+default_formfeed=0  ## Turn off formfeeds for unmatched odd page - default - new default
+
+## Option to delete to Trash
+##  NOTE: Ignored if trash-put is not installed
+delete_to_trash=0 ## 0 - delete print jobs with rm  1 - delete print jobs to Trash

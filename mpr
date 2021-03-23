@@ -1,0 +1,385 @@
+#!/bin/bash
+###################################################
+## mpr                                           ##
+## Mutifile duplex printing, one at a time for a ##
+## dedicated printer on a workstation            ##
+## Calling sequence:                             ##
+## mpr [-i] <print-file> ...                     ##
+##                                               ##
+## Uses default print strategy                   ##
+##                                               ##
+## Copyright (c) 27 Sep 2015 Joseph J. Pollock   ##
+##   JPmicrosystems - josephj at main.nc.us      ##
+##   Last Modified 07/24/2017                    ##
+##                                               ##
+## This program is free software; you can        ##
+## redistribute it and/or modify it under the    ##
+## terms of the GNU General Public License as    ##
+## published by the Free Software Foundation;    ##
+## either version 2 of the License, or           ##
+## (at your option) any later version.           ##
+##                                               ##
+## This program is distributed in the hope       ##
+## that it will be useful, but WITHOUT ANY       ##
+## WARRANTY; without even the implied warranty   ##
+## of MERCHANTABILITY or FITNESS FOR A           ##
+## PARTICULAR PURPOSE. See the GNU General       ##
+## Public License for more details.              ##
+##                                               ##
+## You should have received a copy of the        ##
+## GNU General Public License along with this    ##
+## program; if not, write to                     ##
+##    the Free Software Foundation, Inc.         ##
+##    59 Temple Place - Suite 330                ##
+##    Boston, MA  02111-1307, USA                ##
+###################################################
+
+function quit () {
+  ## clean up loose ends and exit
+  ##
+  rm -f ${tmpfile}
+  exit $rc
+}
+
+function user_abort () {
+  ## clean up loose ends from user abort
+  ##
+  echo
+  echo "  Aborted by User"
+  echo
+  rc=1
+  quit
+  
+}
+
+function get_print_file_type () {
+  ## What type of printable? file is $1
+  ## Return 0 on success
+  ##        1 on failure
+  ## Return print_file_type
+  ##          0 if file does not exist
+  ##               or can't be read
+  ##          1 if file is PostScript
+  ##          2 if file is text
+  ##          3 if file is PDF
+  ##          255 if other
+
+  local str
+
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    print_file_type=0
+    return 1
+  fi
+
+  str=$(file -Lb "${1}")
+  ## echo "str=["${str}"]"
+  case "${str}" in
+    *"PostScript"*"text"*)
+      print_file_type=1
+      return 0
+      ;;
+    
+    *"text"*)
+      print_file_type=2
+      return 0
+      ;;
+    
+    *"PDF"*)
+      print_file_type=3
+      return 0
+      ;;
+    
+    *)
+      print_file_type=255
+      return 1
+      ;;
+  esac
+}
+
+function page_count () {
+  unset page_ct
+  if [[ ! -r "${1}" ]]  # if the file can't be read
+  then
+    return 1
+  fi
+
+  get_print_file_type "${1}"
+  case "${print_file_type}" in
+    1)  ## PostScript
+      ps_page_ct "${1}"
+      return $?
+      ;;
+    
+    3)  ## PDF
+      pdf_page_ct "${1}"
+      return $?
+      ;;
+    
+    *)  ## Anything else fails 
+      return 1
+      ;;
+  esac
+  
+}
+
+function non_numeric () {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [[ -z "${1}" ]] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [[ -z "${var}" ]]
+  return $?
+}
+
+function pdf_page_ct () {
+  local magic page_ct0 rc
+
+  if [[ ! -r "${1}" ]]
+  then
+    return 1 
+  fi
+
+  magic="$(head -1 "${1}" | cut -d '-' -f 1)"
+  if [[ $magic != "%PDF" ]]
+  then
+    return 1 
+  fi
+
+  page_ct0=$(pdfinfo "${1}" 2>/dev/null | grep 'Pages:' | awk '{print $2}')
+  rc=$?
+  (( rc )) && return ${rc}
+  if (( page_ct0 ))
+  then
+    page_ct=${page_ct0}
+    return 0
+  fi
+
+  return 1
+}
+
+function ps_page_ct () {
+  ## extract page count from postscript file
+  ## Return   0 on success
+  ##          1 on failure
+  ##        Number of pages in page_ct (unset if not found)
+  ## This is totally seat of the pants - no guarantees
+  ## First, try to find it at the tail of the file.
+  ## If that fails, try at the head
+  ## If that fails, count the nummber of showpage commands and cross your fingers
+  ## This method is not guaranteed to work because one showpage could be in a function
+  ## called repeatedly, etc.
+
+  local args line page_ct0
+
+  ##echo starting page count
+  unset page_ct page_ct0  ## Clear the return result in case an error occurs
+
+  line=$(tail -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if (( page_ct0 ))
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## If at first you don't succeed, try, try again 
+  line=$(head -30 "${1}" | grep "%%Pages:")  ## Find the line containing %%Pages: nn
+  ##echo Line = "[${line}]" > /dev/stderr
+  args=(${line})  ## Put it into an array to extract the second field - number of pages
+  if [[ "${args[0]}" == "%%Pages:" ]]
+  then
+    page_ct0=$(( ${args[1]} ))
+    if (( page_ct0 ))
+    then
+      page_ct="${page_ct0}"
+      return 0
+    fi
+  fi
+
+  ## The third time is the charm
+  page_ct0="$(grep -c 'showpage' "${1}" 2>/dev/null)"
+  ##page_ct0="$(grep -c 'HiResBoundingBox' "${1}" 2>/dev/null)"
+  if (( ! $? )) && (( page_ct0 ))
+  then
+    page_ct="${page_ct0}"
+    return 0
+  fi
+
+  return 1
+}
+
+function ynq () {
+# Yes/No Question
+# Usage: ynq <prompt>
+# set C style return code
+# Returns 1 for yes and 0 for no - for use with (( ))
+# Enter, by itself, means Yes
+
+  local prompt="$*"
+  local reply
+
+  read -n 1 -p "$prompt" reply
+  [[ -n ${reply} ]] && echo ## Just got one character, so add a newline
+  case "$reply" in
+    [yY1] | "" )
+      return 1
+    ;;
+    *     )
+      return 0
+    ;;
+  esac
+}
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+##source $HOME/bin/bash_trace  ## debug - TRACE
+
+trap 'user_abort' 2  ## Call user_abort() if user presses ctrl-c
+
+script_error=9  ## error code for script/system errors
+script_name=$(basename ${0})  ## path stripped name of this script
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+if (( $? ))    # having an identity crisis
+then
+  echo "Can't find path to scripts"
+  exit "${script_error}"
+fi
+
+if (( ! $# )) || [[ "$1" == '*' ]]
+then
+  echo "Tell me what to print.
+I don't mean to be difficult, but every now and again,
+I need a good argument or two!
+"
+  exit 0
+fi
+
+## enscript parameters
+## In moderate point sizes (12+), the header font may need to be proportional
+## To show the whole header
+## A non-proportional font for the body works best for structured text
+body_font="Luxi-Mono"  ## font for enscript for non-postscript files
+header_font="Times-Roman"  ## font for enscript for non-postscript files
+font_size=14  ## point size for enscript
+margins="50:50:50:50" ## 100ths of inch top, bottom, left, right for enscript
+
+## Create temp file for enscript output
+tp="/tmp"  # temp file path
+tmpfile=$(/bin/mktemp -q $tp/${script_name}.XXXXXX)  # create temp file
+if (( $? ))    # if create tempfile failed
+then
+  echo "Can't create temp file"
+  echo "Check permissions for ${tp}\n\nAborting..."
+  exit "${script_error}"
+fi
+
+total_pages=0  ## Total pages printed
+total_sheets=0 ## Total sheets printed
+run=1   ## if true (1) - actually print jobs
+if (( $# )) && [[ "$1" == "-i" ]]
+then
+  run=0  ## just report pages to be printed and quit
+  shift
+fi
+
+dplx="${script_path}/dplx"
+##dplx="${HOME}/pgm/duplex_proj/devel/current/dplx"  ## debug test version
+
+echo "Duplex printing $@"
+
+i=0
+for file in "$@"
+do
+  if [[ ! -r "${file}" ]]
+  then
+    echo "File not found"
+    echo "Skipping [${file}]"
+    continue   
+  fi
+    
+  get_print_file_type "${file}"
+  rc=$?
+  if (( rc ))
+  then
+    echo "Unsupported file type"
+    echo "Skipping [${file}]"
+    continue
+  fi
+    
+  fn="${file}"
+  if (( print_file_type == 2 ))     ## If it's text
+  then                  ## Convert it to postscript
+    enscript -B -Z --silent --word-wrap --margins=$margins -f${body_font}@${font_size} -F${header_font}@${font_size} -o ${tmpfile} "${file}"
+    fn=${tmpfile}
+  fi
+
+  page_count "${fn}"  ## Get Number of pages to print
+  if (( $? ))
+  then
+    ##echo "#### Debug page_ct = [${page_ct}]"                                                                                                
+    echo "page_count() failed"
+    echo "Skipping [${file}]"
+    continue
+  fi
+
+  (( i++ ))
+  (( sheets = page_ct / 2 ))
+  (( page_ct % 2 )) && (( sheets++ ))
+  printf "Printing %2d of %2d - [%s] - %2d pages %2d sheets\n" "${i}" "$#" "${file}" "$page_ct" "${sheets}"
+
+  if (( run ))
+  then
+    $dplx "$file"
+    rc=$?
+    if (( rc ))
+    then
+      echo "${dplx##*/} failed to print [$file] with error code [$rc]"
+      if (( rc == script_error ))  ## if something worse than just a print file error occurred
+      then                         ## quit processing print jobs
+        break
+      fi
+    fi
+
+    if (( ! rc ))
+    then
+      (( total_pages  += page_ct ))
+      (( total_sheets += sheets ))
+    fi
+    
+    ynq "When Printer stops, remove ALL printed pages, then Press y or Enter to continue "
+    rc=$?
+    if (( ! rc ))  ## User wants to stop printing
+    then
+      echo "${script_name} Quitting at user request"
+      rc=0  ## User quitting is not an error
+      break
+    fi
+  fi
+
+done
+
+if (( total_pages ))
+then
+  echo
+  echo " *** Printed ${total_pages} pages"
+  echo
+fi
+
+quit

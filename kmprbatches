@@ -1,0 +1,297 @@
+#!/bin/bash
+#####################################################
+## kmprbatches                                     ##
+## Usage: kmprbatches [-g] [-b num] [-1] [file ...]##
+##                                                 ##
+##   -g Set GUI mode                               ##
+##      with strategy num                          ##
+##                                                 ##
+##   -b - Preview batches with batch size num      ##
+##      instead of the default batch size          ##
+##                                                 ##
+##   -1 - Process one page jobs in a batch first   ##
+##        as if kmprb -1 option will be used       ##
+##                                                 ##
+##   file ... - if present, only those files are   ##
+##        considered for batching                  ##
+##                                                 ##
+##   Flags can be in any order                     ##
+##                                                 ##
+## Copyright (c) 24 Mar 2018  Joseph J. Pollock    ##
+##   JPmicrosystems - josephj at main.nc.us        ##
+##                                                 ##
+## Last modified 07/31/2018                        ##
+##                                                 ##
+## This program is free software; you can          ##
+## redistribute it and/or modify it under the      ##
+## terms of the GNU General Public License as      ##
+## published by the Free Software Foundation;      ##
+## either version 2 of the License, or             ##
+## (at your option) any later version.             ##
+##                                                 ##
+## This program is distributed in the hope         ##
+## that it will be useful, but WITHOUT ANY         ##
+## WARRANTY; without even the implied warranty     ##
+## of MERCHANTABILITY or FITNESS FOR A             ##
+## PARTICULAR PURPOSE. See the GNU General         ##
+## Public License for more details.                ##
+##                                                 ##
+## You should have received a copy of the          ##
+## GNU General Public License along with this      ##
+## program; if not, write to                       ##
+##    the Free Software Foundation, Inc.           ##
+##    59 Temple Place - Suite 330                  ##
+##    Boston, MA  02111-1307, USA                  ##
+#####################################################
+
+function mypath () {
+  ## Get the real path of the calling script
+  ##  From: https://stackoverflow.com/questions/59895/getting-the-source-directory-of-a-bash-script-from-within/246128#246128
+  my_path="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd)"
+}
+
+function non_numeric () {
+  ## Test string for non_numeric
+  ## For use with (( )) (opposite of [ ])
+  local var
+  ##echo "Testing [${1}]"  ## debug
+  [[ -z "${1}" ]] && return 1
+  var="$(echo "${1}" | sed -re 's/[0-9][0-9]*//')"
+  [[ -z "${var}" ]]
+  return $?
+}
+
+function process_one_pagers () {
+  local elements one_pagers pos
+  one_pagers=0
+  if (( ! jobs ))
+  then
+    (( ! gui )) && echo "${script_name}: process_one_pagers called with empty job list"
+    (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+      --text="process_one_pagers called with empty job list" --width=${ymin_width} --timeout="${dsptime_error}"
+    exit 1
+  fi
+
+  ##echo "Before"
+  ##for (( pos = 0; pos < jobs; pos++ ))
+  ##do
+  ##  echo "pos [$pos] ${page_counts[$pos]} ${counts[$pos]}"
+  ##done
+
+  ## process from the end so removing elements
+  ## doesn't mess up the current pointer
+  (( pos = jobs - 1 ))  ## arrays are zero-based, but element counts are not
+  while (( pos > -1 ))
+  do
+    if [[ "${page_counts[$pos]}" == "1" ]]
+    then
+      (( one_pagers++ )) ## count them
+      ##echo $one_pagers
+      (( pos1 = pos - 1 ))
+      ##echo $pos1
+      ##echo "counts [$pos] [${counts[$pos]}] previous element [$pos1] [${counts[$pos1]}]"
+      counts=(${counts[@]:0:$pos} ${counts[@]:$(($pos + 1))}) ## remove them from the array
+    fi
+    (( pos-- ))
+  done
+  
+  ##jobs="${#counts[@]}"
+  ##echo
+  ##echo "After"
+  ##for (( pos = 0; pos < jobs; pos++ ))
+  ##do
+  ##  echo "pos [$pos] ${counts[$pos]}"
+  ##done
+
+  if (( one_pagers ))
+  then
+    printf "Batch [%2d] - [%3d] one pagers\n" "$batch_no" "$one_pagers"
+  fi  
+}
+
+function report () {
+  if (( separate_1s ))
+  then
+    batch_no=0
+    process_one_pagers
+  fi
+
+  jobs="${#counts[@]}"  ## how many jobs are left
+  if (( ! jobs ))
+  then
+    echo "No (more) jobs to print"
+    return 0
+  fi
+  
+  tot_sheets=0
+  batch_no=1
+  full=0
+
+  for sheets in "${counts[@]}"
+  do
+    (( new_tot = tot_sheets + sheets ))
+    if (( (new_tot) > batch )) ## batch size exceeded
+    then
+      full=1
+      if (( ! tot_sheets )) ## If batch was empty
+      then                  ## single big job is the batch
+        tot_sheets="$sheets"
+        sheets=0
+      fi
+    else ## Just add the sheets in and keep going
+      (( tot_sheets = new_tot ))
+      sheets=0
+    fi
+
+    if (( full ))
+    then
+      printf "Batch [%2d] - [%3d] sheets\n" "$batch_no" "$tot_sheets"
+      (( batch_no++ ))
+      tot_sheets="$sheets"
+      full=0
+    fi
+  done
+
+  if [[ "$tot_sheets" > 0 ]] ## last partial batch
+  then
+    printf "Batch [%2d] - [%3d] sheets\n" "$batch_no" "$tot_sheets"
+  fi
+  
+  (( gui )) && echo -e "\nClick OK\n  or Press Ctrl+Enter"
+}
+
+##################################################################
+##  Main Program                                                ##
+##################################################################
+
+##source $HOME/bin/bash_trace ##  debug - TRACE
+tp='/tmp'
+config="${HOME}/.duplexpr"
+script_error=9
+dsptime_error=30 ## yad timeout error messages
+dsptime_short=5 ## yad timeout error messages
+yopt='--center --on-top --no-markup'
+ymin_width=270 ## Minimum dialog box width that works correctly
+script_name="$(basename $0)"  ## path stripped name of this script
+usage="Usage: $script_name
+  [-g] GUI Mode
+  [-b num] Batch size
+  [-1] Process one page jobs first
+  "
+mypath
+script_path="${my_path}"  ## make sure we can find other scripts
+gui=0 ## 0 - CLI 1 - GUI output
+separate_1s=0 ## 0 - do all jobs together 1 - do all one page jobs first
+help=0 ## 1 - issue short help message if h or --help is specified
+
+## This can run off the end of the arg list, but then arg is null which works fine
+arg_count=$#
+for (( i = 0; i < "$arg_count"; i++ ))
+do
+  arg="$1"
+  ##echo "arg [$i] [$arg]"  ## debug
+  case "$arg" in
+    "-b")  ## specify batch size nn
+      shift
+      batch="$1"
+      non_numeric "$batch"
+      if (( $? ))
+      then
+        (( ! gui )) && echo "${script_name}: Batch size [$batch] must be numeric"
+        (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+          --text="Batch size [$batch] must be numeric" --width=${ymin_width} --timeout="${dsptime_error}"
+        exit 1
+      fi
+      shift
+      ;;
+      
+    "-h" | "--help")  ## GUI output
+      help=1
+      ;;
+      
+    "-g")  ## GUI output
+      shift
+      gui=1
+      ;;
+      
+    "-1")  ## Separate 1 page jobs into their own batch
+      shift
+      separate_1s=1
+      ;;
+      
+    "--")  ## anything that looks like flags after this is a file name
+      shift
+      break
+      ;;
+      
+    -*)  ## Separate 1 page jobs into their own batch
+      (( ! gui )) && echo "${script_name}: Unrecognized option [$arg]"
+      (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+        --text="Unrecognized option [$arg]" --width=${ymin_width} --timeout="${dsptime_error}"
+      exit 1
+      ;;
+
+    *)  ## stop looking for flags as soon as we find a non-flag
+      break
+      ;;
+  esac
+done
+
+##echo "args $@"  ## debug 
+
+if (( help ))
+then
+  (( ! gui )) && echo -e "$usage"
+  (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+    --text="$usage" --width=${ymin_width} --timeout="${dsptime_error}"
+  exit 0
+fi
+
+source "${config}"
+if (( $? ))
+then
+  (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+  --text="Bad config file\n${config}" --width=${ymin_width} --timeout="${dsptime_error}"
+  (( ! gui )) && echo "${script_name}: Bad config file ${config}"
+  rc="${script_error}"
+  exit "$rc"
+fi
+
+cd "${pq}"
+if (( $? ))
+then
+  (( gui )) && yad ${yopt} --title="${script_name}" --info --button=gtk-ok:0\
+  --text="Can't access Print Queue\n[$pq]" --width=${ymin_width} --timeout="${dsptime_error}"
+  (( ! gui )) && echo "${script_name}: Can't access Print Queue [$pq]"
+  rc="${script_error}"
+  exit $rc
+fi
+
+(( ! batch )) && batch="${default_batch_size}"
+
+## Use mprb -i to generate a list of print jobs and extract the number of pages per job
+rc=0
+if (( $# ))  ## If jobs were specified on the command line, just look at those
+then
+  counts=($(${script_path}/mprb -i "$@" | awk '$10 != "" {printf "%d ", $10}'))
+  ## Only need page counts if printing the one pagers first
+  ((separate_1s)) && page_counts=($(${script_path}/mprb -i "$@" | awk '$10 != "" {printf "%d ", $8}'))
+else
+  counts=($(${script_path}/mprb -i * | awk '$10 != "" {printf "%d ", $10}'))
+  ## Only need page counts if printing the one pagers first
+  ((separate_1s)) && page_counts=($(${script_path}/mprb -i * | awk '$10 != "" {printf "%d ", $8}'))
+fi
+jobs="${#counts[@]}"
+
+## If there aren't any jobs, then we're done
+if (( ! jobs ))
+then
+  (( gui )) && yad ${yopt} --title "${script_name}" --info --button=gtk-ok:0\
+  --text="No Jobs to Print" --width=${ymin_width} --timeout="${dsptime_short}"
+  (( ! gui )) && echo "${script_name}: No Jobs to Print"
+  rc=0
+  exit $rc
+fi
+
+(( gui )) && report | yad ${yopt} --button=gtk-ok:1 --title "${script_name}" --width=${ymin_width} --height=200 --tail --text-info
+(( ! gui )) && report
